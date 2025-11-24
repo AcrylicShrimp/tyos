@@ -22,11 +22,12 @@ target("kernel.elf")
 set_kind("binary")
 set_toolchains("m68k-toolchain")
 
-add_files("boot/*.s")
-add_files("kernel/*.c")
+add_files("src/**.s")
+add_files("src/**.c")
+add_includedirs("src")
 
-add_cflags("-m68000", "-O2", "-ffreestanding", "-Wall")
-add_asflags("-m68000")
+add_cflags("-m5200", "-O2", "-ffreestanding", "-Wall")
+add_asflags("-m5200")
 
 add_ldflags("-Tlinker.ld", "-nostdlib")
 
@@ -40,4 +41,14 @@ after_build(function(target)
 
     os.execv(objcopy, { "-O", "binary", elf_path, bin_path })
     cprint("${bright}    -> Output: %s", bin_path)
+end)
+
+on_run(function(target)
+    os.execv("qemu-system-m68k", {
+        "-M", "mcf5208evb",
+        "-kernel", target:targetfile(),
+        "-nographic",
+        -- "-d", "in_asm",
+        -- "-D", "log.txt"
+    })
 end)

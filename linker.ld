@@ -1,8 +1,11 @@
-ENTRY(_start)
+ENTRY(_reset_handler)
 SECTIONS
 {
-    . = 0x4000;
-    .text : { *(.text) }
+    . = 0x40000000;
+    .text : { 
+        */crt0.o(.text)
+        *(.text)
+    }
     .data : { *(.data) }
     .bss  : { *(.bss) }
 }
