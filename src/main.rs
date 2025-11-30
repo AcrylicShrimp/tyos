@@ -2,21 +2,27 @@
 #![no_main]
 
 mod hal;
+mod halt;
 mod heap;
+mod interrupt;
+mod pid_allocator;
+mod scheduler;
+mod task;
+mod timer_interrupt_handler;
 mod trap;
 
 extern crate alloc;
 
 use crate::{
     hal::{get_frame_mgr, get_timer_frequency, init_hal},
+    halt::halt,
     heap::init_heap,
+    interrupt::enable_interrupts,
+    scheduler::{schedule, spawn_idle_task, spawn_task},
     trap::trap_all,
 };
-use tyos_mem::{
-    frame_mgr::FrameMgr,
-    page_table::{PageTable, PageTableEntry},
-};
-use tyos_sbi::set_timer::{get_current_ticks, set_timer};
+use tyos_mem::page_table::{PageTable, PageTableEntry};
+use tyos_sbi::set_timer::get_current_ticks;
 use tyos_uart::println;
 
 #[panic_handler]
@@ -55,6 +61,9 @@ pub extern "C" fn _start() -> ! {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn kmain(hart_id: usize, dtb_pa: usize) -> ! {
+    // 16 MiB
+    const KERNEL_HEAP_SIZE: usize = 16 * 1024 * 1024;
+
     if hart_id != 0 {
         halt();
     }
@@ -62,10 +71,10 @@ pub extern "C" fn kmain(hart_id: usize, dtb_pa: usize) -> ! {
     zero_bss();
 
     init_trap();
-    init_hal(dtb_pa);
+    init_hal(KERNEL_HEAP_SIZE, dtb_pa);
 
     init_vm();
-    init_heap_alloc(1024 * 1024);
+    init_heap_alloc(KERNEL_HEAP_SIZE);
 
     {
         let frame_mgr = get_frame_mgr();
@@ -80,9 +89,37 @@ pub extern "C" fn kmain(hart_id: usize, dtb_pa: usize) -> ! {
 
     println!("kernel initialized");
 
-    enable_interrupts();
-    set_timer(get_current_ticks() + get_timer_frequency());
+    spawn_idle_task();
 
+    {
+        fn sleep(time_in_ms: usize) {
+            let timer_frequency = get_timer_frequency();
+            let target_ticks = get_current_ticks() + (timer_frequency * time_in_ms / 1000);
+
+            while get_current_ticks() < target_ticks {
+                schedule();
+            }
+        }
+
+        fn task_a() {
+            loop {
+                println!("Hello from Task A!");
+                sleep(1000);
+            }
+        }
+
+        fn task_b() {
+            loop {
+                println!("Hello from Task B!");
+                sleep(1000);
+            }
+        }
+
+        spawn_task(task_a);
+        spawn_task(task_b);
+    }
+
+    enable_interrupts();
     halt();
 }
 
@@ -103,14 +140,6 @@ fn zero_bss() {
         let end = &raw mut _bss_end;
         let count = end as usize - start as usize;
         core::ptr::write_bytes(start, 0, count);
-    }
-}
-
-fn halt() -> ! {
-    loop {
-        unsafe {
-            core::arch::asm!("wfi");
-        }
     }
 }
 
@@ -161,29 +190,9 @@ fn build_page_table() -> &'static mut PageTable {
 }
 
 fn init_heap_alloc(heap_size: usize) {
-    let heap_count: usize = heap_size / FrameMgr::FRAME_SIZE;
-    let heap_addr = get_frame_mgr().alloc().unwrap();
-
-    for _ in 1..heap_count {
-        get_frame_mgr().alloc().unwrap();
+    unsafe extern "C" {
+        static _kernel_end: u8;
     }
 
-    init_heap(heap_addr.addr, heap_size);
-}
-
-fn enable_interrupts() {
-    /// Software Interrupt Enable
-    const SIE_SSIE: usize = 1 << 1;
-    /// Timer Interrupt Enable
-    const SIE_STIE: usize = 1 << 5;
-    /// External Interrupt Enable
-    const SIE_SEIE: usize = 1 << 9;
-
-    /// Global Interrupt Enable
-    const SSTATUS_SIE: usize = 1 << 1;
-
-    unsafe {
-        core::arch::asm!("csrs sie, {}", in(reg) SIE_SSIE | SIE_STIE | SIE_SEIE);
-        core::arch::asm!("csrs sstatus, {}", in(reg) SSTATUS_SIE);
-    }
+    init_heap(&raw const _kernel_end as usize, heap_size);
 }

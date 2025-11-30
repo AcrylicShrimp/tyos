@@ -18,7 +18,7 @@ pub fn get_timer_frequency() -> usize {
     TIMER_FREQUENCY.load(core::sync::atomic::Ordering::Relaxed)
 }
 
-pub fn init_hal(dtb_pa: usize) {
+pub fn init_hal(kernel_heap_size: usize, dtb_pa: usize) {
     let dtb_ptr = dtb_pa as *const u8;
     let mut frame_mgr = get_frame_mgr();
 
@@ -39,9 +39,17 @@ pub fn init_hal(dtb_pa: usize) {
             }
         };
 
+        let kernel_heap_start = PhysicalAddress::from_ptr(&raw const _kernel_end);
+        let kernel_heap_end = kernel_heap_start + kernel_heap_size;
+
         let dtb_start = PhysicalAddress::from_ptr(dtb_ptr);
         let dtb_end = dtb_start + total_size;
-        let reserved_regions = find_reserved_regions(Region::new(dtb_start, dtb_end), &fdt);
+
+        let reserved_regions = find_reserved_regions(
+            Region::new(kernel_heap_start, kernel_heap_end),
+            Region::new(dtb_start, dtb_end),
+            &fdt,
+        );
 
         for region in fdt.memory().regions() {
             let starting_address = PhysicalAddress::from_ptr(region.starting_address);
@@ -82,7 +90,11 @@ impl Region {
     }
 }
 
-fn find_reserved_regions(dtb_region: Region, fdt: &Fdt) -> [Region; 128] {
+fn find_reserved_regions(
+    kernel_heap_region: Region,
+    dtb_region: Region,
+    fdt: &Fdt,
+) -> [Region; 128] {
     let mut count = 0;
     let mut regions = [Region::new(PhysicalAddress::NULL, PhysicalAddress::NULL); 128];
 
@@ -93,11 +105,15 @@ fn find_reserved_regions(dtb_region: Region, fdt: &Fdt) -> [Region; 128] {
     );
     count += 1;
 
-    // 2. dtb
-    regions[1] = dtb_region;
+    // 2. kernel heap
+    regions[1] = kernel_heap_region;
     count += 1;
 
-    // 3. reserved regions from fdt
+    // 3. dtb
+    regions[2] = dtb_region;
+    count += 1;
+
+    // 4. reserved regions from fdt
     if let Some(reserved_memory) = fdt.find_node("/reserved-memory") {
         for node in reserved_memory.children() {
             let reg = match node.reg() {
