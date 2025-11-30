@@ -1,3 +1,3 @@
 # tyos
 
-A toy operating system for Motorola 68010 CPUs.
+A toy operating system for RISC-V CPUs, specifically for RV64GC.

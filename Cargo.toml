@@ -1,0 +1,19 @@
+[package]
+name = "tyos"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+members = ["crates/*"]
+
+[workspace.dependencies]
+fdt = "0.1"
+linked_list_allocator = "0.10"
+tyos-mem = { path = "crates/tyos-mem" }
+tyos-uart = { path = "crates/tyos-uart" }
+
+[dependencies]
+fdt.workspace = true
+linked_list_allocator.workspace = true
+tyos-mem.workspace = true
+tyos-uart.workspace = true
