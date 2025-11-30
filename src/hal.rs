@@ -1,4 +1,5 @@
 use fdt::Fdt;
+use spinning_top::{Spinlock, guard::SpinlockGuard};
 use tyos_mem::{frame_mgr::FrameMgr, physical_address::PhysicalAddress};
 
 unsafe extern "C" {
@@ -6,47 +7,57 @@ unsafe extern "C" {
     static _kernel_end: u8;
 }
 
-pub struct Hal {
-    pub frame_mgr: FrameMgr,
+static FRAME_MGR: Spinlock<FrameMgr> = Spinlock::new(FrameMgr::EMPTY);
+static TIMER_FREQUENCY: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+pub fn get_frame_mgr() -> SpinlockGuard<'static, FrameMgr> {
+    FRAME_MGR.lock()
 }
 
-impl Hal {
-    pub fn parse_from_dtb(dtb_pa: usize) -> Self {
-        let dtb_ptr = dtb_pa as *const u8;
-        let mut frame_mgr = FrameMgr::EMPTY;
+pub fn get_timer_frequency() -> usize {
+    TIMER_FREQUENCY.load(core::sync::atomic::Ordering::Relaxed)
+}
 
-        unsafe {
-            let header = *(dtb_ptr as *const [u32; 2]);
-            let magic = header[0].to_be();
-            let total_size = header[1].to_be() as usize;
+pub fn init_hal(dtb_pa: usize) {
+    let dtb_ptr = dtb_pa as *const u8;
+    let mut frame_mgr = get_frame_mgr();
 
-            if magic != 0xd00d_feed {
-                panic!("invalid dtb magic: {magic:x}");
-            }
+    unsafe {
+        let header = *(dtb_ptr as *const [u32; 2]);
+        let magic = header[0].to_be();
+        let total_size = header[1].to_be() as usize;
 
-            let dtb_slice = core::slice::from_raw_parts(dtb_ptr, total_size);
-            let fdt = match Fdt::new(dtb_slice) {
-                Ok(fdt) => fdt,
-                Err(err) => {
-                    panic!("failed to parse dtb: {err:?}");
-                }
-            };
-
-            let dtb_start = PhysicalAddress::from_ptr(dtb_ptr);
-            let dtb_end = dtb_start + total_size;
-            let reserved_regions = find_reserved_regions(Region::new(dtb_start, dtb_end), &fdt);
-
-            for region in fdt.memory().regions() {
-                let starting_address = PhysicalAddress::from_ptr(region.starting_address);
-                let size = region.size.unwrap_or(0);
-                let end = starting_address + size;
-                let region = Region::new(starting_address, end);
-
-                register_region(&mut frame_mgr, region, &reserved_regions);
-            }
+        if magic != 0xd00d_feed {
+            panic!("invalid dtb magic: {magic:x}");
         }
 
-        Self { frame_mgr }
+        let dtb_slice = core::slice::from_raw_parts(dtb_ptr, total_size);
+        let fdt = match Fdt::new(dtb_slice) {
+            Ok(fdt) => fdt,
+            Err(err) => {
+                panic!("failed to parse dtb: {err:?}");
+            }
+        };
+
+        let dtb_start = PhysicalAddress::from_ptr(dtb_ptr);
+        let dtb_end = dtb_start + total_size;
+        let reserved_regions = find_reserved_regions(Region::new(dtb_start, dtb_end), &fdt);
+
+        for region in fdt.memory().regions() {
+            let starting_address = PhysicalAddress::from_ptr(region.starting_address);
+            let size = region.size.unwrap_or(0);
+            let end = starting_address + size;
+            let region = Region::new(starting_address, end);
+
+            register_region(&mut frame_mgr, region, &reserved_regions);
+        }
+
+        if let Some(cpus) = fdt.find_node("/cpus")
+            && let Some(prop) = cpus.property("timebase-frequency")
+        {
+            let frequency = prop.as_usize().unwrap_or(0);
+            TIMER_FREQUENCY.store(frequency, core::sync::atomic::Ordering::Relaxed);
+        }
     }
 }
 

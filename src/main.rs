@@ -7,14 +7,17 @@ mod trap;
 
 extern crate alloc;
 
-use crate::{hal::Hal, heap::init_heap, trap::trap_all};
+use crate::{
+    hal::{get_frame_mgr, get_timer_frequency, init_hal},
+    heap::init_heap,
+    trap::trap_all,
+};
 use tyos_mem::{
     frame_mgr::FrameMgr,
     page_table::{PageTable, PageTableEntry},
 };
+use tyos_sbi::set_timer::{get_current_ticks, set_timer};
 use tyos_uart::println;
-
-static mut FRAME_ALLOCATOR: FrameMgr = FrameMgr::EMPTY;
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
@@ -56,28 +59,29 @@ pub extern "C" fn kmain(hart_id: usize, dtb_pa: usize) -> ! {
         halt();
     }
 
-    init_trap();
     zero_bss();
 
-    let hal = Hal::parse_from_dtb(dtb_pa);
-
-    unsafe {
-        FRAME_ALLOCATOR = hal.frame_mgr;
-    }
+    init_trap();
+    init_hal(dtb_pa);
 
     init_vm();
     init_heap_alloc(1024 * 1024);
 
-    #[allow(static_mut_refs)]
-    unsafe {
+    {
+        let frame_mgr = get_frame_mgr();
+
         println!(
             "[MEM] total: {} KiB, free: {} KiB",
-            FRAME_ALLOCATOR.total_size() / 1024,
-            FRAME_ALLOCATOR.free_size() / 1024
+            frame_mgr.total_size() / 1024,
+            frame_mgr.free_size() / 1024
         );
+        println!("[TIMER] frequency: {} Hz", get_timer_frequency());
     }
 
     println!("kernel initialized");
+
+    enable_interrupts();
+    set_timer(get_current_ticks() + get_timer_frequency());
 
     halt();
 }
@@ -111,7 +115,6 @@ fn halt() -> ! {
 }
 
 fn init_vm() {
-    #[allow(static_mut_refs)]
     unsafe {
         let l2 = build_page_table();
 
@@ -144,10 +147,9 @@ fn init_vm() {
 }
 
 fn build_page_table() -> &'static mut PageTable {
-    #[allow(static_mut_refs)]
-    unsafe {
-        let page_table_addr = FRAME_ALLOCATOR.alloc().unwrap();
+    let page_table_addr = get_frame_mgr().alloc().unwrap();
 
+    unsafe {
         core::ptr::write_bytes(
             page_table_addr.to_mut_ptr::<u8>(),
             0,
@@ -159,15 +161,29 @@ fn build_page_table() -> &'static mut PageTable {
 }
 
 fn init_heap_alloc(heap_size: usize) {
-    #[allow(static_mut_refs)]
+    let heap_count: usize = heap_size / FrameMgr::FRAME_SIZE;
+    let heap_addr = get_frame_mgr().alloc().unwrap();
+
+    for _ in 1..heap_count {
+        get_frame_mgr().alloc().unwrap();
+    }
+
+    init_heap(heap_addr.addr, heap_size);
+}
+
+fn enable_interrupts() {
+    /// Software Interrupt Enable
+    const SIE_SSIE: usize = 1 << 1;
+    /// Timer Interrupt Enable
+    const SIE_STIE: usize = 1 << 5;
+    /// External Interrupt Enable
+    const SIE_SEIE: usize = 1 << 9;
+
+    /// Global Interrupt Enable
+    const SSTATUS_SIE: usize = 1 << 1;
+
     unsafe {
-        let heap_count: usize = heap_size / FrameMgr::FRAME_SIZE;
-        let heap_addr = FRAME_ALLOCATOR.alloc().unwrap();
-
-        for _ in 1..heap_count {
-            FRAME_ALLOCATOR.alloc().unwrap();
-        }
-
-        init_heap(heap_addr.addr, heap_size);
+        core::arch::asm!("csrs sie, {}", in(reg) SIE_SSIE | SIE_STIE | SIE_SEIE);
+        core::arch::asm!("csrs sstatus, {}", in(reg) SSTATUS_SIE);
     }
 }

@@ -1,3 +1,4 @@
+use tyos_sbi::set_timer::{get_current_ticks, set_timer};
 use tyos_uart::println;
 
 #[repr(C)]
@@ -116,6 +117,9 @@ pub extern "C" fn trap_handler(ctx: &mut TrapContext) {
         match code {
             5 => {
                 println!("[INTERRUPT] timer interrupt");
+
+                let next_ticks = get_current_ticks() + 10_000_000;
+                set_timer(next_ticks);
             }
             _ => {
                 println!("[INTERRUPT] unknown interrupt: {code}");
