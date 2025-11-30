@@ -3,10 +3,11 @@
 
 mod hal;
 mod heap;
+mod trap;
 
 extern crate alloc;
 
-use crate::{hal::Hal, heap::init_heap};
+use crate::{hal::Hal, heap::init_heap, trap::trap_all};
 use tyos_mem::{
     frame_mgr::FrameMgr,
     page_table::{PageTable, PageTableEntry},
@@ -55,6 +56,7 @@ pub extern "C" fn kmain(hart_id: usize, dtb_pa: usize) -> ! {
         halt();
     }
 
+    init_trap();
     zero_bss();
 
     let hal = Hal::parse_from_dtb(dtb_pa);
@@ -78,6 +80,12 @@ pub extern "C" fn kmain(hart_id: usize, dtb_pa: usize) -> ! {
     println!("kernel initialized");
 
     halt();
+}
+
+fn init_trap() {
+    unsafe {
+        core::arch::asm!("csrw stvec, {}", in(reg) trap_all);
+    }
 }
 
 fn zero_bss() {
