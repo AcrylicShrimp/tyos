@@ -1,37 +1,40 @@
 OUTPUT_ARCH(riscv)
 ENTRY(_start)
 
+BASE_PADDR = 0x80200000;
+BASE_VADDR = 0xFFFFFFFF80200000;
+
 SECTIONS
 {
-  /*
-    RAM Start:               0x80000000
-    + OpenSBI Firmware Size: 0x00200000
-    = Kernel Load Address:   0x80200000
-  */
-  . = 0x80200000;
+  . = BASE_VADDR;
 
   _kernel_start = .;
 
-  .text : {
+  .text : AT(ADDR(.text) - BASE_VADDR + BASE_PADDR) {
     *(.text.init)
     *(.text .text.*)
   }
 
-  .rodata : {
+  .rodata : AT(ADDR(.rodata) - BASE_VADDR + BASE_PADDR) {
     *(.rodata .rodata.*)
   }
 
-  .data : {
+  .data : AT(ADDR(.data) - BASE_VADDR + BASE_PADDR) {
     *(.data .data.*)
   }
 
-  .bss : {
+  .bss : AT(ADDR(.bss) - BASE_VADDR + BASE_PADDR) {
     _bss_start = .;
     *(.bss .bss.*)
     *(COMMON)
     _bss_end = .;
   }
-  
+
+  .pgtable : AT(ADDR(.pgtable) - BASE_VADDR + BASE_PADDR) {
+    . = ALIGN(4096);
+    *(.pgtable)
+  }
+
   . = ALIGN(4096);
   _stack_bottom = .;
   . += 128 * 1024; 

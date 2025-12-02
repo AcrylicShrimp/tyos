@@ -3,7 +3,7 @@
 pub struct Uart;
 
 impl Uart {
-    const UART0: *mut u8 = 0x1000_0000 as *mut u8;
+    const UART0: *mut u8 = 0xFFFF_FFC0_1000_0000 as *mut u8;
 }
 
 impl core::fmt::Write for Uart {

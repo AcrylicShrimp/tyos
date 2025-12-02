@@ -10,6 +10,7 @@ mod scheduler;
 mod task;
 mod timer_interrupt_handler;
 mod trap;
+mod vmem;
 
 extern crate alloc;
 
@@ -20,8 +21,9 @@ use crate::{
     interrupt::enable_interrupts,
     scheduler::{schedule, spawn_idle_task, spawn_task},
     trap::trap_all,
+    vmem::remove_temporal_double_mapping,
 };
-use tyos_mem::page_table::{PageTable, PageTableEntry};
+use tyos_mem::addr::PAddr;
 use tyos_sbi::set_timer::get_current_ticks;
 use tyos_uart::println;
 
@@ -56,24 +58,80 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.init")]
 pub extern "C" fn _start() -> ! {
-    core::arch::naked_asm!("la sp, _stack_top", "jal kmain", "j .halt", ".halt:", "wfi");
+    const KERNEL_BASE_OFFSET: usize = 0xFFFF_FFFF_0000_0000;
+
+    core::arch::naked_asm!(
+        // set stack pointer
+        "la sp, _stack_top",
+        "",
+        // back-up hart id and dtb physical address
+        "mv s0, a0",
+        "mv s1, a1",
+        "",
+        // build boot page table
+        "la a0, PAGE_TABLE",
+        "call build_boot_page_table",
+        "",
+        // addr -> ppn
+        "la t0, PAGE_TABLE",
+        "srli t0, t0, 12",
+        "",
+        // mode 8 (Sv39)
+        "li t1, 8 << 60",
+        "or t0, t0, t1",
+        "",
+        // engage virtual memory
+        "csrw satp, t0",
+        "sfence.vma",
+        "",
+        // jump to kentry, with virtual address
+        "la ra, kentry",
+        "li t0, {offset}",
+        "add ra, ra, t0",
+        "ret",
+        offset = const KERNEL_BASE_OFFSET,
+    );
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn kmain(hart_id: usize, dtb_pa: usize) -> ! {
-    // 16 MiB
-    const KERNEL_HEAP_SIZE: usize = 16 * 1024 * 1024;
+pub extern "C" fn kentry() {
+    // make stack pointer point to the end of the stack, in virtual address
+    unsafe {
+        core::arch::asm!("la sp, _stack_top");
+    }
 
+    // restore hart id and dtb physical address from back-up
+    let hart_id: usize;
+    let dtb_paddr: usize;
+
+    unsafe {
+        core::arch::asm!("mv {}, s0", out(reg) hart_id);
+        core::arch::asm!("mv {}, s1", out(reg) dtb_paddr);
+    }
+
+    // remove temporal double mapping
+    remove_temporal_double_mapping();
+
+    unsafe {
+        core::arch::asm!("sfence.vma");
+    }
+
+    kmain(hart_id, dtb_paddr);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kmain(hart_id: usize, dtb_paddr: usize) -> ! {
     if hart_id != 0 {
         halt();
     }
 
     zero_bss();
 
-    init_trap();
-    init_hal(KERNEL_HEAP_SIZE, dtb_pa);
+    /// 16 MiB
+    const KERNEL_HEAP_SIZE: usize = 16 * 1024 * 1024;
 
-    init_vm();
+    init_trap();
+    init_hal(KERNEL_HEAP_SIZE, PAddr::from_raw_addr(dtb_paddr));
     init_heap_alloc(KERNEL_HEAP_SIZE);
 
     {
@@ -140,52 +198,6 @@ fn zero_bss() {
         let end = &raw mut _bss_end;
         let count = end as usize - start as usize;
         core::ptr::write_bytes(start, 0, count);
-    }
-}
-
-fn init_vm() {
-    unsafe {
-        let l2 = build_page_table();
-
-        l2.entries[0] = PageTableEntry::new(
-            0x0000_0000,
-            PageTableEntry::FLAG_VALID
-                | PageTableEntry::FLAG_READ
-                | PageTableEntry::FLAG_WRITE
-                | PageTableEntry::FLAG_GLOBAL
-                | PageTableEntry::FLAG_ACCESSED
-                | PageTableEntry::FLAG_DIRTY,
-        );
-        l2.entries[2] = PageTableEntry::new(
-            0x8000_0000,
-            PageTableEntry::FLAG_VALID
-                | PageTableEntry::FLAG_READ
-                | PageTableEntry::FLAG_WRITE
-                | PageTableEntry::FLAG_EXECUTE
-                | PageTableEntry::FLAG_GLOBAL
-                | PageTableEntry::FLAG_ACCESSED
-                | PageTableEntry::FLAG_DIRTY,
-        );
-
-        let root_ppn = (l2 as *const _ as usize) >> 12;
-        let satp_val = (8 << 60) | root_ppn;
-
-        core::arch::asm!("csrw satp, {}", in(reg) satp_val);
-        core::arch::asm!("sfence.vma");
-    }
-}
-
-fn build_page_table() -> &'static mut PageTable {
-    let page_table_addr = get_frame_mgr().alloc().unwrap();
-
-    unsafe {
-        core::ptr::write_bytes(
-            page_table_addr.to_mut_ptr::<u8>(),
-            0,
-            size_of::<PageTable>(),
-        );
-
-        &mut *(page_table_addr.to_mut_ptr())
     }
 }
 

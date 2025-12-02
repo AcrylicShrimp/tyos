@@ -1,6 +1,9 @@
 use fdt::Fdt;
 use spinning_top::{Spinlock, guard::SpinlockGuard};
-use tyos_mem::{frame_mgr::FrameMgr, physical_address::PhysicalAddress};
+use tyos_mem::{
+    addr::{PAddr, VAddr},
+    frame_mgr::FrameMgr,
+};
 
 unsafe extern "C" {
     static _kernel_start: u8;
@@ -18,8 +21,8 @@ pub fn get_timer_frequency() -> usize {
     TIMER_FREQUENCY.load(core::sync::atomic::Ordering::Relaxed)
 }
 
-pub fn init_hal(kernel_heap_size: usize, dtb_pa: usize) {
-    let dtb_ptr = dtb_pa as *const u8;
+pub fn init_hal(kernel_heap_size: usize, dtb_paddr: PAddr) {
+    let dtb_ptr = dtb_paddr.to_hhdm().to_ptr::<u8>();
     let mut frame_mgr = get_frame_mgr();
 
     unsafe {
@@ -39,10 +42,10 @@ pub fn init_hal(kernel_heap_size: usize, dtb_pa: usize) {
             }
         };
 
-        let kernel_heap_start = PhysicalAddress::from_ptr(&raw const _kernel_end);
+        let kernel_heap_start = VAddr::from_ptr(&raw const _kernel_end).from_kernel_to_physical();
         let kernel_heap_end = kernel_heap_start + kernel_heap_size;
 
-        let dtb_start = PhysicalAddress::from_ptr(dtb_ptr);
+        let dtb_start = VAddr::from_ptr(dtb_ptr).from_hhdm_to_physical();
         let dtb_end = dtb_start + total_size;
 
         let reserved_regions = find_reserved_regions(
@@ -52,7 +55,7 @@ pub fn init_hal(kernel_heap_size: usize, dtb_pa: usize) {
         );
 
         for region in fdt.memory().regions() {
-            let starting_address = PhysicalAddress::from_ptr(region.starting_address);
+            let starting_address = PAddr::from_ptr(region.starting_address);
             let size = region.size.unwrap_or(0);
             let end = starting_address + size;
             let region = Region::new(starting_address, end);
@@ -69,14 +72,14 @@ pub fn init_hal(kernel_heap_size: usize, dtb_pa: usize) {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Region {
-    start: PhysicalAddress,
-    end: PhysicalAddress,
+    start: PAddr,
+    end: PAddr,
 }
 
 impl Region {
-    pub fn new(start: PhysicalAddress, end: PhysicalAddress) -> Self {
+    pub fn new(start: PAddr, end: PAddr) -> Self {
         Self { start, end }
     }
 
@@ -96,12 +99,12 @@ fn find_reserved_regions(
     fdt: &Fdt,
 ) -> [Region; 128] {
     let mut count = 0;
-    let mut regions = [Region::new(PhysicalAddress::NULL, PhysicalAddress::NULL); 128];
+    let mut regions = [Region::new(PAddr::NULL, PAddr::NULL); 128];
 
     // 1. kernel
     regions[0] = Region::new(
-        PhysicalAddress::from_ptr(&raw const _kernel_start),
-        PhysicalAddress::from_ptr(&raw const _kernel_end),
+        VAddr::from_ptr(&raw const _kernel_start).from_kernel_to_physical(),
+        VAddr::from_ptr(&raw const _kernel_end).from_kernel_to_physical(),
     );
     count += 1;
 
@@ -128,7 +131,7 @@ fn find_reserved_regions(
                     panic!("too many reserved regions");
                 }
 
-                let starting_address = PhysicalAddress::from_ptr(region.starting_address);
+                let starting_address = PAddr::from_ptr(region.starting_address);
                 let end = starting_address + region.size.unwrap_or(0);
 
                 regions[count] = Region::new(starting_address, end);
