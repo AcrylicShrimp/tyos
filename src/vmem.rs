@@ -100,10 +100,10 @@ pub fn remove_temporal_double_mapping() {
         let kernel_index_end = kernel_paddr_end.addr / L2_PTE_SIZE;
         let kernel_range = kernel_index_start..kernel_index_end;
 
-        core::ptr::write_bytes(
+        core::ptr::write_bytes::<PageTableEntry>(
             page_table.entries[kernel_range.clone()].as_mut_ptr(),
             0,
-            size_of::<PageTableEntry>() * kernel_range.len(),
+            kernel_range.len(),
         );
     }
 }
