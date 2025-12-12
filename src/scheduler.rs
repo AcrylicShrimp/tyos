@@ -3,8 +3,8 @@ use crate::{
     task::{Task, TaskContext, TaskState},
 };
 use alloc::{collections::btree_map::BTreeMap, vec::Vec};
+use goblin::elf::Elf;
 use spinning_top::Spinlock;
-use tyos_uart::println;
 
 static SCHEDULER: Spinlock<Scheduler> = Spinlock::new(Scheduler::new());
 
@@ -20,10 +20,10 @@ pub fn spawn_idle_task() {
     scheduler.spawn_idle_task();
 }
 
-pub fn spawn_task(entry: fn()) {
+pub fn spawn_task(elf_file: &[u8]) {
     let mut scheduler = SCHEDULER.lock();
 
-    scheduler.spawn_task(entry);
+    scheduler.spawn_task(elf_file);
 }
 
 pub fn exit_task(pid: usize, exit_code: usize) {
@@ -86,9 +86,16 @@ impl Scheduler {
         self.task_map.insert(pid, task);
     }
 
-    fn spawn_task(&mut self, entry: fn()) {
+    fn spawn_task(&mut self, elf_file: &[u8]) {
+        let elf = match Elf::parse(elf_file) {
+            Ok(elf) => elf,
+            Err(err) => {
+                panic!("failed to parse elf file: {err:#?}");
+            }
+        };
+
         let pid = self.pid_allocator.alloc();
-        let task = Task::new(pid, entry);
+        let task = Task::load_from_elf(pid, &elf, elf_file);
         self.task_map.insert(pid, task);
     }
 

@@ -8,6 +8,11 @@ members = ["crates/*"]
 
 [workspace.dependencies]
 fdt = "0.1"
+goblin = { version = "0.10", default-features = false, features = [
+    "elf32",
+    "elf64",
+    "endian_fd",
+] }
 linked_list_allocator = "0.10"
 spinning_top = "0.3"
 tyos-mem = { path = "crates/tyos-mem" }
@@ -16,6 +21,7 @@ tyos-uart = { path = "crates/tyos-uart" }
 
 [dependencies]
 fdt.workspace = true
+goblin.workspace = true
 linked_list_allocator.workspace = true
 spinning_top.workspace = true
 tyos-mem.workspace = true

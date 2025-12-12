@@ -1,120 +1,366 @@
 use crate::addr::PAddr;
 
-pub struct FrameMgr {
-    next_free_frame_addr: Option<PAddr>,
-    next_region_addr: Option<PAddr>,
-    total_size: usize,
-    free_size: usize,
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MemBlock {
+    next: PAddr,
+    prev: PAddr,
 }
 
-impl FrameMgr {
-    pub const EMPTY: Self = Self {
-        next_free_frame_addr: None,
-        next_region_addr: None,
-        total_size: 0,
-        free_size: 0,
-    };
+#[derive(Debug)]
+pub struct MemList {
+    next: PAddr,
+}
 
-    /// 4 KiB
-    pub const FRAME_SIZE: usize = 4 * 1024;
+impl MemList {
+    pub const EMPTY: Self = Self { next: PAddr::NULL };
 
-    pub fn total_size(&self) -> usize {
-        self.total_size
+    pub fn new(next: PAddr) -> Self {
+        Self { next }
     }
 
-    pub fn free_size(&self) -> usize {
-        self.free_size
+    #[inline]
+    unsafe fn block_mut<'a>(addr: PAddr) -> &'a mut MemBlock {
+        unsafe { &mut *addr.to_hhdm().to_mut_ptr::<MemBlock>() }
     }
 
-    pub fn add_region(&mut self, region_start: PAddr, region_size: usize) {
-        let region_start = align_up(region_start, Self::FRAME_SIZE);
-        let region_end = align_down(region_start + region_size, Self::FRAME_SIZE);
-
-        if region_end.addr < region_start.addr {
-            // ignore invalid region
-            return;
-        }
-
-        if region_end.addr - region_start.addr < Self::FRAME_SIZE {
-            // ignore too small region
-            return;
-        }
-
-        let frame_ptr = region_start.to_hhdm().to_mut_ptr();
-
+    pub fn push(&mut self, frame: PAddr) {
         unsafe {
-            core::ptr::write_volatile(
-                frame_ptr,
-                [region_end, self.next_region_addr.unwrap_or(PAddr::NULL)],
+            if self.next != PAddr::NULL {
+                let block = Self::block_mut(self.next);
+                block.prev = frame;
+            }
+
+            core::ptr::write(
+                frame.to_hhdm().to_mut_ptr(),
+                MemBlock {
+                    next: self.next,
+                    prev: PAddr::NULL,
+                },
             );
         }
 
-        self.next_region_addr = Some(region_start);
-        self.total_size += region_size;
-        self.free_size += region_size;
+        self.next = frame;
     }
 
-    pub fn alloc(&mut self) -> Option<PAddr> {
-        if let Some(frame) = self.next_free_frame_addr {
-            let frame_ptr = frame.to_hhdm().to_mut_ptr();
-            let next_frame_addr: PAddr = unsafe { core::ptr::read_volatile(frame_ptr) };
-
-            self.next_free_frame_addr = match next_frame_addr {
-                PAddr::NULL => None,
-                _ => Some(next_frame_addr),
-            };
-
-            self.free_size -= Self::FRAME_SIZE;
-            return Some(frame);
+    pub fn pop(&mut self) -> Option<PAddr> {
+        if self.next == PAddr::NULL {
+            return None;
         }
 
-        if let Some(mut region_start) = self.next_region_addr {
-            let [region_end, next_region_addr] = unsafe {
-                core::ptr::read_volatile(region_start.to_hhdm().to_mut_ptr::<[PAddr; 2]>())
-            };
+        let frame = self.next;
 
-            let frame = region_start;
-            region_start += Self::FRAME_SIZE;
+        unsafe {
+            let block = Self::block_mut(frame);
+            self.next = block.next;
 
-            if region_start.addr == region_end.addr {
-                self.next_region_addr = match next_region_addr {
-                    PAddr::NULL => None,
-                    _ => Some(next_region_addr),
-                };
+            if self.next != PAddr::NULL {
+                let block = Self::block_mut(self.next);
+                block.prev = PAddr::NULL;
+            }
+        }
+
+        Some(frame)
+    }
+
+    pub fn detach(&mut self, addr: PAddr) {
+        unsafe {
+            let block = Self::block_mut(addr);
+            let prev = block.prev;
+            let next = block.next;
+
+            if prev != PAddr::NULL {
+                let prev_block = Self::block_mut(prev);
+                prev_block.next = next;
+            }
+
+            if next != PAddr::NULL {
+                let next_block = Self::block_mut(next);
+                next_block.prev = prev;
+            }
+
+            if self.next == addr {
+                self.next = next;
+            }
+        }
+    }
+}
+
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MemMetadata(u8);
+
+impl MemMetadata {
+    pub fn new(order: u8, is_free: bool) -> Self {
+        Self((order << 1) | (is_free as u8))
+    }
+
+    pub fn order(self) -> u8 {
+        self.0 >> 1
+    }
+
+    pub fn is_free(self) -> bool {
+        self.0 & 1 != 0
+    }
+}
+
+impl From<u8> for MemMetadata {
+    fn from(value: u8) -> Self {
+        Self(value)
+    }
+}
+
+impl From<MemMetadata> for u8 {
+    fn from(value: MemMetadata) -> Self {
+        value.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Region {
+    pub start: PAddr,
+    pub end: PAddr,
+}
+
+impl Region {
+    pub fn new(start: PAddr, end: PAddr) -> Self {
+        Self { start, end }
+    }
+
+    pub fn merge(lhs: Self, rhs: Self) -> Self {
+        Self {
+            start: lhs.start.min(rhs.start),
+            end: lhs.end.max(rhs.end),
+        }
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.end.addr <= self.start.addr
+    }
+
+    pub fn is_overlap(self, other: Self) -> bool {
+        self.start.addr < other.end.addr && other.start.addr < self.end.addr
+    }
+
+    pub fn len(self) -> usize {
+        self.end - self.start
+    }
+
+    pub fn align(self, alignment: usize) -> Self {
+        Self {
+            start: self.start.align_up(alignment),
+            end: self.end.align_down(alignment),
+        }
+    }
+}
+
+pub trait PhysicalMemoryProbe {
+    fn unaligned_regions_iter(&self) -> impl Iterator<Item = Region>;
+}
+
+pub trait PhysicalMemoryProbeExt {
+    fn regions_iter(&self) -> impl Iterator<Item = Region>;
+    fn entire_region(&self) -> Region;
+    fn find_free_contiguous_region(&self, size: usize) -> Option<Region>;
+}
+
+impl<T> PhysicalMemoryProbeExt for T
+where
+    T: PhysicalMemoryProbe,
+{
+    fn regions_iter(&self) -> impl Iterator<Item = Region> {
+        self.unaligned_regions_iter().filter_map(|region| {
+            let region = region.align(FrameMgr::FRAME_SIZE);
+
+            if region.is_empty() {
+                None
             } else {
+                Some(region)
+            }
+        })
+    }
+
+    fn entire_region(&self) -> Region {
+        self.regions_iter()
+            .reduce(Region::merge)
+            .expect("no available memory region found")
+    }
+
+    fn find_free_contiguous_region(&self, size: usize) -> Option<Region> {
+        self.regions_iter()
+            .find(|region| !region.is_empty() && size <= region.len())
+    }
+}
+
+#[derive(Debug)]
+pub struct FrameMgr {
+    mem_base: PAddr,
+    mem_lists: [MemList; Self::MAX_ORDER],
+    mem_metadata: &'static mut [MemMetadata],
+}
+
+impl Default for FrameMgr {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FrameMgr {
+    /// 4 KiB
+    pub const FRAME_SIZE: usize = 4096;
+
+    /// 4 MiB
+    pub const MAX_ORDER: usize = 11;
+
+    pub const fn new() -> Self {
+        Self {
+            mem_base: PAddr::NULL,
+            mem_lists: [MemList::EMPTY; Self::MAX_ORDER],
+            mem_metadata: &mut [],
+        }
+    }
+
+    #[inline]
+    fn metadata(&self, frame: PAddr) -> Option<MemMetadata> {
+        if frame < self.mem_base {
+            return None;
+        }
+
+        let metadata_index = (frame - self.mem_base) / Self::FRAME_SIZE;
+        self.mem_metadata.get(metadata_index).copied()
+    }
+
+    #[inline]
+    fn set_metadata(&mut self, frame: PAddr, metadata: MemMetadata) {
+        if frame < self.mem_base {
+            return;
+        }
+
+        let metadata_index = (frame - self.mem_base) / Self::FRAME_SIZE;
+
+        if let Some(metadata_mut) = self.mem_metadata.get_mut(metadata_index) {
+            *metadata_mut = metadata;
+        }
+    }
+
+    pub fn init<T: PhysicalMemoryProbe>(&mut self, probe: &T) {
+        let mem_region = probe.entire_region();
+        self.mem_base = mem_region.start;
+
+        let mem_metadata_count = mem_region.len() / Self::FRAME_SIZE;
+        let mem_metadata_size = mem_metadata_count * size_of::<MemMetadata>();
+        let mem_metadata_region = match probe.find_free_contiguous_region(mem_metadata_size) {
+            Some(region) => region,
+            None => {
+                panic!("not enough contiguous memory for memory metadata");
+            }
+        };
+        self.mem_metadata = unsafe {
+            core::slice::from_raw_parts_mut(
+                mem_metadata_region.start.to_hhdm().to_mut_ptr(),
+                mem_metadata_count,
+            )
+        };
+
+        unsafe {
+            // zero out the memory metadata, making all memory metadata as:
+            // - order: 0
+            // - is_free: false
+            core::ptr::write_bytes::<MemMetadata>(
+                self.mem_metadata.as_mut_ptr(),
+                0,
+                mem_metadata_count,
+            );
+        }
+
+        for mut mem_region in probe.regions_iter() {
+            for order in (0..self.mem_lists.len()).rev() {
+                let block_size = Self::FRAME_SIZE * (1 << order);
+                let block_count = mem_region.len() / block_size;
+
+                if block_count == 0 {
+                    break;
+                }
+
                 unsafe {
-                    core::ptr::write_volatile(
-                        region_start.to_hhdm().to_mut_ptr(),
-                        [region_end, next_region_addr],
+                    // set all memory metadata as free and of the same order
+                    core::ptr::write_bytes::<MemMetadata>(
+                        &raw mut self.mem_metadata
+                            [(mem_region.start - self.mem_base) / Self::FRAME_SIZE],
+                        MemMetadata::new(order as u8, true).into(),
+                        mem_region.len() / Self::FRAME_SIZE,
                     );
                 }
 
-                self.next_region_addr = Some(region_start);
-            }
+                for block_index in 0..block_count {
+                    let block_paddr = mem_region.start + block_index * block_size;
+                    self.mem_lists[order].push(block_paddr);
+                }
 
-            self.free_size -= Self::FRAME_SIZE;
-            return Some(frame);
+                mem_region.start += block_count * block_size;
+            }
+        }
+    }
+
+    fn alloc_from_order(&mut self, order: usize) -> Option<(usize, PAddr)> {
+        for order in order..self.mem_lists.len() {
+            if let Some(frame) = self.mem_lists[order].pop() {
+                return Some((order, frame));
+            }
         }
 
         None
     }
 
-    pub fn free(&mut self, frame: PAddr) {
-        let frame_ptr = frame.to_hhdm().to_mut_ptr();
-
-        unsafe {
-            core::ptr::write_volatile(frame_ptr, self.next_free_frame_addr.unwrap_or(PAddr::NULL));
+    pub fn alloc(&mut self, frame_count: usize) -> Option<PAddr> {
+        if frame_count == 0 {
+            return None;
         }
 
-        self.next_free_frame_addr = Some(frame);
-        self.free_size += Self::FRAME_SIZE;
+        let target_order = frame_count.next_power_of_two().trailing_zeros() as usize;
+        let (alloc_order, frame) = self.alloc_from_order(target_order)?;
+
+        for order in (target_order..alloc_order).rev() {
+            let block_size = Self::FRAME_SIZE * (1 << order);
+            let buddy_frame = PAddr::from_raw_addr(frame.addr + block_size);
+            self.set_metadata(buddy_frame, MemMetadata::new(order as u8, true));
+            self.mem_lists[order].push(buddy_frame);
+        }
+
+        self.set_metadata(frame, MemMetadata::new(target_order as u8, false));
+        Some(frame)
     }
-}
 
-fn align_up(value: PAddr, alignment: usize) -> PAddr {
-    PAddr::from_raw_addr((value.addr + alignment - 1) & !(alignment - 1))
-}
+    pub fn free(&mut self, frame: PAddr, frame_count: usize) {
+        if frame_count == 0 {
+            return;
+        }
 
-fn align_down(value: PAddr, alignment: usize) -> PAddr {
-    PAddr::from_raw_addr(value.addr & !(alignment - 1))
+        let target_order = frame_count.next_power_of_two().trailing_zeros() as usize;
+        let mut final_order = target_order;
+        let mut final_frame = frame;
+
+        for order in target_order..(self.mem_lists.len() - 1) {
+            let block_size = Self::FRAME_SIZE * (1 << order);
+            let buddy_frame = PAddr::from_raw_addr(final_frame.addr ^ block_size);
+            let buddy_frame_metadata = match self.metadata(buddy_frame) {
+                Some(metadata) => metadata,
+                None => {
+                    break;
+                }
+            };
+
+            if buddy_frame_metadata.order() as usize != order || !buddy_frame_metadata.is_free() {
+                break;
+            }
+
+            self.mem_lists[order].detach(buddy_frame);
+
+            final_order = order + 1;
+            final_frame = PAddr::from_raw_addr(final_frame.addr & buddy_frame.addr);
+        }
+
+        self.set_metadata(final_frame, MemMetadata::new(final_order as u8, true));
+        self.mem_lists[final_order].push(final_frame);
+    }
 }

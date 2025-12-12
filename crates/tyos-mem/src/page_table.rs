@@ -59,7 +59,7 @@ pub fn map(
     let ppn0 = vaddr.ppn0();
 
     if !page_table.entries[ppn2].is_valid() {
-        let paddr = frame_mgr.alloc().expect("out of memory");
+        let paddr = frame_mgr.alloc(1).expect("out of memory");
         let vaddr = paddr.to_hhdm();
 
         unsafe {
@@ -75,7 +75,7 @@ pub fn map(
     let l1_table = unsafe { &mut *l1_ptr };
 
     if !l1_table.entries[ppn1].is_valid() {
-        let paddr = frame_mgr.alloc().expect("out of memory");
+        let paddr = frame_mgr.alloc(1).expect("out of memory");
         let vaddr = paddr.to_hhdm();
 
         unsafe {

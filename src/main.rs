@@ -15,7 +15,7 @@ mod vmem;
 extern crate alloc;
 
 use crate::{
-    hal::{get_frame_mgr, get_timer_frequency, init_hal},
+    hal::{get_timer_frequency, init_hal},
     halt::halt,
     heap::init_heap,
     interrupt::enable_interrupts,
@@ -134,48 +134,37 @@ pub extern "C" fn kmain(hart_id: usize, dtb_paddr: usize) -> ! {
     init_hal(KERNEL_HEAP_SIZE, PAddr::from_raw_addr(dtb_paddr));
     init_heap_alloc(KERNEL_HEAP_SIZE);
 
-    {
-        let frame_mgr = get_frame_mgr();
-
-        println!(
-            "[MEM] total: {} KiB, free: {} KiB",
-            frame_mgr.total_size() / 1024,
-            frame_mgr.free_size() / 1024
-        );
-        println!("[TIMER] frequency: {} Hz", get_timer_frequency());
-    }
-
     println!("kernel initialized");
 
     spawn_idle_task();
 
-    {
-        fn sleep(time_in_ms: usize) {
-            let timer_frequency = get_timer_frequency();
-            let target_ticks = get_current_ticks() + (timer_frequency * time_in_ms / 1000);
+    // {
+    //     fn sleep(time_in_ms: usize) {
+    //         let timer_frequency = get_timer_frequency();
+    //         let target_ticks = get_current_ticks() + (timer_frequency * time_in_ms / 1000);
 
-            while get_current_ticks() < target_ticks {
-                schedule();
-            }
-        }
+    //         while get_current_ticks() < target_ticks {
+    //             schedule();
+    //         }
+    //     }
 
-        fn task_a() {
-            loop {
-                println!("Hello from Task A!");
-                sleep(1000);
-            }
-        }
+    //     fn task_a() {
+    //         loop {
+    //             println!("Hello from Task A!");
+    //             sleep(1000);
+    //         }
+    //     }
 
-        fn task_b() {
-            loop {
-                println!("Hello from Task B!");
-                sleep(1000);
-            }
-        }
+    //     fn task_b() {
+    //         loop {
+    //             println!("Hello from Task B!");
+    //             sleep(1000);
+    //         }
+    //     }
 
-        spawn_task(task_a);
-        spawn_task(task_b);
-    }
+    //     spawn_task(task_a);
+    //     spawn_task(task_b);
+    // }
 
     enable_interrupts();
     halt();

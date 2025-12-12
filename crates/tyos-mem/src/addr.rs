@@ -10,7 +10,7 @@ pub struct VAddr {
 impl VAddr {
     pub const NULL: Self = Self { addr: 0 };
 
-    pub fn from_raw_addr(addr: usize) -> Self {
+    pub const fn from_raw_addr(addr: usize) -> Self {
         Self { addr }
     }
 
