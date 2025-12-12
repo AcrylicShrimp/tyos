@@ -7,6 +7,7 @@ mod heap;
 mod interrupt;
 mod pid_allocator;
 mod scheduler;
+mod syscall;
 mod task;
 mod timer_interrupt_handler;
 mod trap;

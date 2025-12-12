@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace]
-members = ["crates/*"]
+members = ["bins/*", "crates/*"]
 
 [workspace.dependencies]
 fdt = "0.1"
@@ -17,7 +17,9 @@ linked_list_allocator = "0.10"
 spinning_top = "0.3"
 tyos-mem = { path = "crates/tyos-mem" }
 tyos-sbi = { path = "crates/tyos-sbi" }
+tyos-syscall = { path = "crates/tyos-syscall" }
 tyos-uart = { path = "crates/tyos-uart" }
+tyos-ulib = { path = "crates/tyos-ulib" }
 
 [dependencies]
 fdt.workspace = true
@@ -26,4 +28,9 @@ linked_list_allocator.workspace = true
 spinning_top.workspace = true
 tyos-mem.workspace = true
 tyos-sbi.workspace = true
+tyos-syscall.workspace = true
 tyos-uart.workspace = true
+
+[profile.release]
+panic = "abort"
+lto = true

@@ -26,7 +26,7 @@ pub fn spawn_task(elf_file: &[u8]) {
     scheduler.spawn_task(elf_file);
 }
 
-pub fn exit_task(pid: usize, exit_code: usize) {
+pub fn exit_task(pid: usize, exit_code: isize) {
     let context_switcher = {
         let mut scheduler = SCHEDULER.lock();
 
@@ -56,7 +56,7 @@ pub fn schedule() {
 #[derive(Debug, Clone, Copy)]
 struct ExitedTask {
     pid: usize,
-    exit_code: usize,
+    exit_code: isize,
 }
 
 struct Scheduler {
@@ -99,7 +99,7 @@ impl Scheduler {
         self.task_map.insert(pid, task);
     }
 
-    fn stop_task(&mut self, pid: usize, exit_code: usize) -> bool {
+    fn stop_task(&mut self, pid: usize, exit_code: isize) -> bool {
         if pid == 0 {
             // idle task cannot be stopped
             return false;

@@ -1,4 +1,4 @@
-use crate::timer_interrupt_handler::timer_interrupt_handler;
+use crate::{syscall::syscall_handler, timer_interrupt_handler::timer_interrupt_handler};
 use tyos_uart::println;
 
 #[repr(C)]
@@ -174,7 +174,12 @@ pub extern "C" fn trap_handler(ctx: &mut TrapContext) {
     } else {
         match code {
             8 => {
-                println!("[EXCEPTION] syscall from user mode");
+                let syscall_id = ctx.regs[17];
+                let arg0 = ctx.regs[10];
+                let arg1 = ctx.regs[11];
+                let arg2 = ctx.regs[12];
+                let result = syscall_handler(syscall_id, arg0, arg1, arg2);
+                ctx.regs[10] = result as usize;
                 ctx.sepc += 4;
             }
             12 => {

@@ -94,6 +94,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "shell"
+version = "0.1.0"
+dependencies = [
+ "tyos-ulib",
+]
+
+[[package]]
 name = "spinning_top"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -132,6 +139,7 @@ dependencies = [
  "spinning_top 0.3.0",
  "tyos-mem",
  "tyos-sbi",
+ "tyos-syscall",
  "tyos-uart",
 ]
 
@@ -147,8 +155,19 @@ name = "tyos-sbi"
 version = "0.1.0"
 
 [[package]]
+name = "tyos-syscall"
+version = "0.1.0"
+
+[[package]]
 name = "tyos-uart"
 version = "0.1.0"
+
+[[package]]
+name = "tyos-ulib"
+version = "0.1.0"
+dependencies = [
+ "tyos-syscall",
+]
 
 [[package]]
 name = "unicode-ident"
