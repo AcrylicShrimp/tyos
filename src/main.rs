@@ -16,17 +16,19 @@ mod vmem;
 extern crate alloc;
 
 use crate::{
-    hal::{get_timer_frequency, init_hal},
+    hal::init_hal,
     halt::halt,
     heap::init_heap,
     interrupt::enable_interrupts,
-    scheduler::{schedule, spawn_idle_task, spawn_task},
+    scheduler::{spawn_idle_task, spawn_task},
     trap::trap_all,
     vmem::remove_temporal_double_mapping,
 };
 use tyos_mem::addr::PAddr;
-use tyos_sbi::set_timer::get_current_ticks;
 use tyos_uart::println;
+
+static USER_APP_SHELL_ELF_FILE: &[u8] =
+    include_bytes!("../target/riscv64gc-unknown-none-elf/debug/shell");
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
@@ -138,34 +140,7 @@ pub extern "C" fn kmain(hart_id: usize, dtb_paddr: usize) -> ! {
     println!("kernel initialized");
 
     spawn_idle_task();
-
-    // {
-    //     fn sleep(time_in_ms: usize) {
-    //         let timer_frequency = get_timer_frequency();
-    //         let target_ticks = get_current_ticks() + (timer_frequency * time_in_ms / 1000);
-
-    //         while get_current_ticks() < target_ticks {
-    //             schedule();
-    //         }
-    //     }
-
-    //     fn task_a() {
-    //         loop {
-    //             println!("Hello from Task A!");
-    //             sleep(1000);
-    //         }
-    //     }
-
-    //     fn task_b() {
-    //         loop {
-    //             println!("Hello from Task B!");
-    //             sleep(1000);
-    //         }
-    //     }
-
-    //     spawn_task(task_a);
-    //     spawn_task(task_b);
-    // }
+    spawn_task(USER_APP_SHELL_ELF_FILE);
 
     enable_interrupts();
     halt();

@@ -5,6 +5,7 @@ use crate::{
 use alloc::{collections::btree_map::BTreeMap, vec::Vec};
 use goblin::elf::Elf;
 use spinning_top::Spinlock;
+use tyos_uart::println;
 
 static SCHEDULER: Spinlock<Scheduler> = Spinlock::new(Scheduler::new());
 

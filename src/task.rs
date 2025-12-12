@@ -104,11 +104,19 @@ impl Task {
             program_end_vaddr = program_end_vaddr.max(vm_range.end);
 
             if vm_range.start < Self::USER_BOTTOM.addr {
-                panic!("program section is too low");
+                panic!(
+                    "program section is too low (asserted: {:x} <= {:x})",
+                    Self::USER_BOTTOM.addr,
+                    vm_range.start,
+                );
             }
 
             if Self::USER_TOP_1.addr < vm_range.end {
-                panic!("program section is too high");
+                panic!(
+                    "program section is too high (asserted: {:x} <= {:x})",
+                    vm_range.end,
+                    Self::USER_TOP_1.addr,
+                );
             }
 
             let file_range = header.file_range();

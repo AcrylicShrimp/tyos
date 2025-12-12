@@ -167,6 +167,16 @@ name = "tyos-ulib"
 version = "0.1.0"
 dependencies = [
  "tyos-syscall",
+ "tyos-ulib-macro",
+]
+
+[[package]]
+name = "tyos-ulib-macro"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

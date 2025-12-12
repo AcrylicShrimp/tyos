@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace]
-members = ["bins/*", "crates/*"]
+members = ["apps/*", "crates/*"]
 
 [workspace.dependencies]
 fdt = "0.1"
@@ -20,6 +20,7 @@ tyos-sbi = { path = "crates/tyos-sbi" }
 tyos-syscall = { path = "crates/tyos-syscall" }
 tyos-uart = { path = "crates/tyos-uart" }
 tyos-ulib = { path = "crates/tyos-ulib" }
+tyos-ulib-macro = { path = "crates/tyos-ulib-macro" }
 
 [dependencies]
 fdt.workspace = true
