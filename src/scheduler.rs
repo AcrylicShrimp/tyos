@@ -1,9 +1,11 @@
 use crate::{
     pid_allocator::PidAllocator,
-    task::{Task, TaskContext, TaskState},
+    task::{
+        Task, TaskContext, TaskState, address_space::TaskAddressSpace, elf_importer::import_elf,
+        program::ProgramDefConfig,
+    },
 };
 use alloc::{collections::btree_map::BTreeMap, vec::Vec};
-use goblin::elf::Elf;
 use spinning_top::Spinlock;
 use tyos_uart::println;
 
@@ -88,17 +90,23 @@ impl Scheduler {
     }
 
     fn spawn_task(&mut self, elf_file: &[u8]) {
-        let elf = match Elf::parse(elf_file) {
-            Ok(elf) => elf,
+        let program = match import_elf(
+            elf_file,
+            &ProgramDefConfig {
+                vmem_range: TaskAddressSpace::program_vmem_range(),
+            },
+        ) {
+            Ok(program) => program,
             Err(err) => {
-                panic!("failed to parse elf file: {err:#?}");
+                panic!("failed to import elf file: {err:#?}");
             }
         };
 
-        println!("elf is parsed");
+        println!("program is imported");
 
         let pid = self.pid_allocator.alloc();
-        let task = Task::load_from_elf(pid, &elf, elf_file);
+        let task = Task::from_loaded_program(pid, program);
+
         self.task_map.insert(pid, task);
     }
 

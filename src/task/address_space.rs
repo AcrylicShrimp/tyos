@@ -96,19 +96,46 @@ impl TaskAddressSpace {
 
     pub const USER_HEAP_END_ADDR: VAddr = VAddr::from_raw_addr(Self::USER_HEAP_END);
 
-    pub fn new(program_end: VAddr) -> Result<Self, TaskAddressSpaceError> {
-        Ok(TaskAddressSpaceBuilder::new(program_end)?
-            .setup_kernel_mappings()
-            .setup_stack_frames()?
-            .commit())
-    }
+    pub const fn program_vmem_range() -> core::ops::Range<VAddr> {
+        let begin = Self::USER_SPACE_START;
+        let end = Self::USER_HEAP_END - Self::USER_HEAP_GUARD_SIZE - FrameMgr::FRAME_SIZE;
 
+        VAddr::from_raw_addr(begin)..VAddr::from_raw_addr(end)
+    }
+}
+
+const _: () = {
+    let range = TaskAddressSpace::program_vmem_range();
+
+    assert!(
+        range.start.addr < range.end.addr,
+        "invalid program virtual memory range",
+    );
+};
+
+impl TaskAddressSpace {
     /// ## SAFETY:
     ///
     /// Caller must guarantee this address space is not active on any hart.
     pub unsafe fn destroy(self) {
         frame_alloc().free_many(&self.owned_frames);
         frame_alloc().free_contiguous(self.root_page_frame, 1);
+    }
+
+    pub fn root_page_frame(&self) -> PAddr {
+        self.root_page_frame
+    }
+
+    pub fn user_heap_range(&self) -> core::ops::Range<VAddr> {
+        self.user_heap_start..self.user_heap_end
+    }
+
+    pub fn user_main_thread_stack_range(&self) -> core::ops::Range<VAddr> {
+        self.user_main_thread_stack_bottom..self.user_main_thread_stack_top
+    }
+
+    pub fn kernel_stack_range(&self) -> core::ops::Range<VAddr> {
+        self.kernel_stack_bottom..self.kernel_stack_top
     }
 }
 
@@ -151,7 +178,7 @@ pub enum TaskAddressSpaceBuilderError {
     MapError(MapError),
 }
 
-struct TaskAddressSpaceBuilder {
+pub struct TaskAddressSpaceBuilder {
     parts: Option<TaskAddressSpaceBuilderParts>,
 }
 
@@ -254,6 +281,15 @@ impl TaskAddressSpaceBuilder {
         )?;
 
         Ok(self)
+    }
+
+    pub fn map_zeroed_page(
+        &mut self,
+        vaddr: VAddr,
+        flags: usize,
+    ) -> Result<PAddr, TaskAddressSpaceBuilderError> {
+        self.map_page_range_and_zero(vaddr, vaddr + FrameMgr::FRAME_SIZE, flags)
+            .map(|frames| frames[0])
     }
 
     fn map_page_range_and_zero(

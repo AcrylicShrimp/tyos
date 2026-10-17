@@ -1,5 +1,8 @@
 use crate::task::{
-    address_space::{TaskAddressSpace, TaskAddressSpaceError},
+    address_space::{
+        TaskAddressSpace, TaskAddressSpaceBuilder, TaskAddressSpaceBuilderError,
+        TaskAddressSpaceError,
+    },
     program::{ProgramDef, ProgramDefSectionPermission},
 };
 use alloc::vec::Vec;
@@ -15,6 +18,19 @@ pub enum ProgramLoadError {
     SectionNotFound,
     InvalidDataLen,
     TaskAddressSpaceError(TaskAddressSpaceError),
+    TaskAddressSpaceBuilderError(TaskAddressSpaceBuilderError),
+}
+
+impl From<TaskAddressSpaceError> for ProgramLoadError {
+    fn from(err: TaskAddressSpaceError) -> Self {
+        ProgramLoadError::TaskAddressSpaceError(err)
+    }
+}
+
+impl From<TaskAddressSpaceBuilderError> for ProgramLoadError {
+    fn from(err: TaskAddressSpaceBuilderError) -> Self {
+        ProgramLoadError::TaskAddressSpaceBuilderError(err)
+    }
 }
 
 #[derive(Debug)]
@@ -22,36 +38,6 @@ pub struct LoadedProgram {
     pub entry: VAddr,
     pub aligned_end: VAddr,
     pub addr_space: TaskAddressSpace,
-}
-
-struct TaskAddressSpaceGuard {
-    inner: Option<TaskAddressSpace>,
-}
-
-impl TaskAddressSpaceGuard {
-    fn new(program_end: VAddr) -> Result<Self, TaskAddressSpaceError> {
-        Ok(Self {
-            inner: Some(TaskAddressSpace::new(program_end)?),
-        })
-    }
-
-    fn get_mut(&mut self) -> &mut TaskAddressSpace {
-        self.inner.as_mut().unwrap()
-    }
-
-    fn into_inner(mut self) -> TaskAddressSpace {
-        self.inner.take().unwrap()
-    }
-}
-
-impl Drop for TaskAddressSpaceGuard {
-    fn drop(&mut self) {
-        if let Some(inner) = self.inner.take() {
-            unsafe {
-                inner.destroy();
-            }
-        }
-    }
 }
 
 pub fn load_program(def: &ProgramDef, data: &[u8]) -> Result<LoadedProgram, ProgramLoadError> {
@@ -62,14 +48,13 @@ pub fn load_program(def: &ProgramDef, data: &[u8]) -> Result<LoadedProgram, Prog
         .checked_align_up(FrameMgr::FRAME_SIZE)
         .ok_or(ProgramLoadError::EndOverflow)?;
 
-    let mut addr_space =
-        TaskAddressSpaceGuard::new(aligned_end).map_err(ProgramLoadError::TaskAddressSpaceError)?;
+    let mut addr_space_builder = TaskAddressSpaceBuilder::new(aligned_end)?
+        .setup_kernel_mappings()
+        .setup_stack_frames()?;
 
     for section in &load_plan {
-        let frame = addr_space
-            .get_mut()
-            .map_zeroed_page(section.vaddr, permission_to_page_flags(section.permission))
-            .map_err(ProgramLoadError::TaskAddressSpaceError)?;
+        let frame = addr_space_builder
+            .map_zeroed_page(section.vaddr, permission_to_page_flags(section.permission))?;
 
         for source in &section.sources {
             let dest = frame + source.dest_local_offset;
@@ -97,7 +82,7 @@ pub fn load_program(def: &ProgramDef, data: &[u8]) -> Result<LoadedProgram, Prog
     Ok(LoadedProgram {
         entry: def.entry(),
         aligned_end,
-        addr_space: addr_space.into_inner(),
+        addr_space: addr_space_builder.commit(),
     })
 }
 
