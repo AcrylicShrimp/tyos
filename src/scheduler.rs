@@ -95,6 +95,8 @@ impl Scheduler {
             }
         };
 
+        println!("elf is parsed");
+
         let pid = self.pid_allocator.alloc();
         let task = Task::load_from_elf(pid, &elf, elf_file);
         self.task_map.insert(pid, task);

@@ -16,7 +16,7 @@ pub extern "C" fn build_boot_page_table(page_table_ptr: *mut PageTable) {
         let page_table = &mut *page_table_ptr;
 
         // 1. clear
-        core::ptr::write_bytes(page_table.entries.as_mut_ptr(), 0, 512);
+        core::ptr::write_bytes(page_table.entries.as_mut_ptr(), 0, page_table.entries.len());
 
         // LAYOUT:
         // 0 ~ 255: user space
@@ -116,12 +116,12 @@ pub fn remove_temporal_double_mapping() {
 
         let kernel_index_start = kernel_paddr_start.addr / L2_PTE_SIZE;
         let kernel_index_end = kernel_paddr_end.addr / L2_PTE_SIZE;
-        let kernel_range = kernel_index_start..kernel_index_end;
+        let kernel_index_range = kernel_index_start..kernel_index_end;
 
         core::ptr::write_bytes::<PageTableEntry>(
-            page_table.entries[kernel_range.clone()].as_mut_ptr(),
+            page_table.entries[kernel_index_range.clone()].as_mut_ptr(),
             0,
-            kernel_range.len(),
+            kernel_index_range.len(),
         );
     }
 }

@@ -42,16 +42,39 @@ impl VAddr {
         self.addr & 0xFFF
     }
 
+    pub fn is_aligned(self, alignment: usize) -> bool {
+        self.addr.is_multiple_of(alignment)
+    }
+
     pub fn align_up(self, alignment: usize) -> Self {
-        Self {
-            addr: (self.addr + alignment - 1) & !(alignment - 1),
-        }
+        self.checked_align_up(alignment).expect("align up failed")
     }
 
     pub fn align_down(self, alignment: usize) -> Self {
-        Self {
-            addr: self.addr & !(alignment - 1),
+        self.checked_align_down(alignment)
+            .expect("align down failed")
+    }
+
+    pub fn checked_align_up(self, alignment: usize) -> Option<Self> {
+        if !alignment.is_power_of_two() {
+            return None;
         }
+
+        let mask = alignment - 1;
+        let rounded = self.addr.checked_add(mask)? & !mask;
+
+        Some(Self::from_raw_addr(rounded))
+    }
+
+    pub fn checked_align_down(self, alignment: usize) -> Option<Self> {
+        if !alignment.is_power_of_two() {
+            return None;
+        }
+
+        let mask = alignment - 1;
+        let rounded = self.addr & !mask;
+
+        Some(Self::from_raw_addr(rounded))
     }
 
     pub fn to_hhdm(self) -> Self {
@@ -68,6 +91,12 @@ impl VAddr {
 
     pub fn from_kernel_to_physical(self) -> PAddr {
         PAddr::from_raw_addr(self.addr - K2P_ADDR_OFFSET)
+    }
+}
+
+impl core::fmt::Display for VAddr {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "VAddr(0x{:x})", self.addr)
     }
 }
 
@@ -150,16 +179,39 @@ impl PAddr {
         (self.addr >> 12) & 0x0000_03FF_FFFF_FFFF
     }
 
+    pub fn is_aligned(self, alignment: usize) -> bool {
+        self.addr.is_multiple_of(alignment)
+    }
+
     pub fn align_up(self, alignment: usize) -> Self {
-        Self {
-            addr: (self.addr + alignment - 1) & !(alignment - 1),
-        }
+        self.checked_align_up(alignment).expect("align up failed")
     }
 
     pub fn align_down(self, alignment: usize) -> Self {
-        Self {
-            addr: self.addr & !(alignment - 1),
+        self.checked_align_down(alignment)
+            .expect("align down failed")
+    }
+
+    pub fn checked_align_up(self, alignment: usize) -> Option<Self> {
+        if !alignment.is_power_of_two() {
+            return None;
         }
+
+        let mask = alignment - 1;
+        let rounded = self.addr.checked_add(mask)? & !mask;
+
+        Some(Self::from_raw_addr(rounded))
+    }
+
+    pub fn checked_align_down(self, alignment: usize) -> Option<Self> {
+        if !alignment.is_power_of_two() {
+            return None;
+        }
+
+        let mask = alignment - 1;
+        let rounded = self.addr & !mask;
+
+        Some(Self::from_raw_addr(rounded))
     }
 
     pub fn to_hhdm(self) -> VAddr {
@@ -168,6 +220,12 @@ impl PAddr {
 
     pub fn to_kernel(self) -> VAddr {
         VAddr::from_raw_addr(self.addr + K2P_ADDR_OFFSET)
+    }
+}
+
+impl core::fmt::Display for PAddr {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "PAddr(0x{:x})", self.addr)
     }
 }
 

@@ -1,4 +1,5 @@
 use crate::addr::PAddr;
+use tyos_uart::println;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -155,13 +156,14 @@ impl Region {
 }
 
 pub trait PhysicalMemoryProbe {
-    fn unaligned_regions_iter(&self) -> impl Iterator<Item = Region>;
+    fn regions(&self) -> &[Region];
+    fn set_region(&mut self, index: usize, region: Region);
 }
 
 pub trait PhysicalMemoryProbeExt {
     fn regions_iter(&self) -> impl Iterator<Item = Region>;
     fn entire_region(&self) -> Region;
-    fn find_free_contiguous_region(&self, size: usize) -> Option<Region>;
+    fn find_free_contiguous_region(&self, size: usize) -> Option<(usize, Region)>;
 }
 
 impl<T> PhysicalMemoryProbeExt for T
@@ -169,15 +171,9 @@ where
     T: PhysicalMemoryProbe,
 {
     fn regions_iter(&self) -> impl Iterator<Item = Region> {
-        self.unaligned_regions_iter().filter_map(|region| {
-            let region = region.align(FrameMgr::FRAME_SIZE);
-
-            if region.is_empty() {
-                None
-            } else {
-                Some(region)
-            }
-        })
+        self.regions()
+            .iter()
+            .map(|region| region.align(FrameMgr::FRAME_SIZE))
     }
 
     fn entire_region(&self) -> Region {
@@ -186,9 +182,11 @@ where
             .expect("no available memory region found")
     }
 
-    fn find_free_contiguous_region(&self, size: usize) -> Option<Region> {
+    fn find_free_contiguous_region(&self, size: usize) -> Option<(usize, Region)> {
         self.regions_iter()
-            .find(|region| !region.is_empty() && size <= region.len())
+            .enumerate()
+            .find(|(_, region)| !region.is_empty() && size <= region.len())
+            .map(|(index, region)| (index, Region::new(region.start, region.start + size)))
     }
 }
 
@@ -243,24 +241,37 @@ impl FrameMgr {
         }
     }
 
-    pub fn init<T: PhysicalMemoryProbe>(&mut self, probe: &T) {
+    pub fn init<T: PhysicalMemoryProbe>(&mut self, probe: &mut T) {
         let mem_region = probe.entire_region();
         self.mem_base = mem_region.start;
 
         let mem_metadata_count = mem_region.len() / Self::FRAME_SIZE;
         let mem_metadata_size = mem_metadata_count * size_of::<MemMetadata>();
-        let mem_metadata_region = match probe.find_free_contiguous_region(mem_metadata_size) {
-            Some(region) => region,
-            None => {
-                panic!("not enough contiguous memory for memory metadata");
-            }
-        };
+
+        let (mem_metadata_region_index, mem_metadata_region) =
+            match probe.find_free_contiguous_region(mem_metadata_size) {
+                Some(region) => region,
+                None => {
+                    panic!("not enough contiguous memory for memory metadata");
+                }
+            };
         self.mem_metadata = unsafe {
             core::slice::from_raw_parts_mut(
                 mem_metadata_region.start.to_hhdm().to_mut_ptr(),
                 mem_metadata_count,
             )
         };
+
+        let original_region = probe.regions()[mem_metadata_region_index];
+        let modified_region = Region::new(mem_metadata_region.end, original_region.end);
+        probe.set_region(mem_metadata_region_index, modified_region);
+
+        println!(
+            "mem_metadata_size: {}KiB ({} ~ {})",
+            mem_metadata_size / 1024,
+            mem_metadata_region.start,
+            mem_metadata_region.end
+        );
 
         unsafe {
             // zero out the memory metadata, making all memory metadata as:
@@ -274,12 +285,30 @@ impl FrameMgr {
         }
 
         for mut mem_region in probe.regions_iter() {
+            if mem_region.is_empty() {
+                continue;
+            }
+
+            println!(
+                "mem_region: {} ~ {} (Size: {} KiB)",
+                mem_region.start,
+                mem_region.end,
+                mem_region.len() / 1024
+            );
+
             for order in (0..self.mem_lists.len()).rev() {
+                if mem_region.is_empty() {
+                    break;
+                }
+
                 let block_size = Self::FRAME_SIZE * (1 << order);
                 let block_count = mem_region.len() / block_size;
 
+                println!("block size: {} KiB", block_size / 1024);
+                println!("block count: {}", block_count);
+
                 if block_count == 0 {
-                    break;
+                    continue;
                 }
 
                 unsafe {
@@ -300,6 +329,8 @@ impl FrameMgr {
                 mem_region.start += block_count * block_size;
             }
         }
+
+        println!("mem_lists: {:#?}", self.mem_lists);
     }
 
     fn alloc_from_order(&mut self, order: usize) -> Option<(usize, PAddr)> {

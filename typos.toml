@@ -2,3 +2,6 @@
 [default.extend-words]
 tyos = "tyos"
 TyOS = "TyOS"
+sie = "sie"
+Sie = "Sie"
+SIE = "SIE"

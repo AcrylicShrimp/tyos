@@ -144,15 +144,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "tyos-arch"
+version = "0.1.0"
+
+[[package]]
 name = "tyos-mem"
 version = "0.1.0"
 dependencies = [
+ "tyos-sync",
  "tyos-uart",
 ]
 
 [[package]]
 name = "tyos-sbi"
 version = "0.1.0"
+
+[[package]]
+name = "tyos-sync"
+version = "0.1.0"
+dependencies = [
+ "tyos-arch",
+]
 
 [[package]]
 name = "tyos-syscall"

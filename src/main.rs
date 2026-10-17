@@ -6,6 +6,7 @@ mod halt;
 mod heap;
 mod interrupt;
 mod pid_allocator;
+mod resources;
 mod scheduler;
 mod syscall;
 mod task;

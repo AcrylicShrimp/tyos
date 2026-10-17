@@ -1,12 +1,18 @@
-use crate::{hal::get_frame_mgr, vmem::build_task_page_table};
+mod address_space;
+mod elf_importer;
+mod loader;
+mod program;
+
+use crate::{resources::memory::frame_alloc, vmem::build_task_page_table};
 use alloc::vec::Vec;
 use goblin::elf::{Elf, program_header};
 use tyos_mem::{
     addr::{PAddr, VAddr},
     frame_mgr::FrameMgr,
-    page_table::{PageTable, PageTableEntry, map_range},
+    page_table::{PageTable, PageTableEntry},
     page_table_config::{PageTableConfig, PageTableMode},
 };
+use tyos_uart::println;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskState {
@@ -57,9 +63,9 @@ pub struct Task {
 }
 
 impl Task {
-    const USER_TOP_0: VAddr = VAddr::from_raw_addr(0x0000_003F_FFFF_F000);
-    const USER_TOP_1: VAddr = VAddr::from_raw_addr(0x0000_003F_FFF0_0000);
-    const USER_BOTTOM: VAddr = VAddr::from_raw_addr(0x0000_0000_0000_1000);
+    pub const USER_TOP_0: VAddr = VAddr::from_raw_addr(0x0000_003F_FFFF_F000);
+    pub const USER_TOP_1: VAddr = VAddr::from_raw_addr(0x0000_003F_FFF0_0000);
+    pub const USER_BOTTOM: VAddr = VAddr::from_raw_addr(0x0000_0000_0000_1000);
 
     pub fn empty(pid: usize) -> Self {
         Self {
@@ -75,15 +81,21 @@ impl Task {
     }
 
     pub fn load_from_elf(pid: usize, elf: &Elf, elf_file: &[u8]) -> Self {
+        println!("load_from_elf");
+
         let mut allocated_frames = Vec::new();
 
-        let page_table_paddr = { get_frame_mgr().alloc(1) }.expect("out of memory");
+        let page_table_paddr = { frame_alloc().alloc_contiguous(1) }.expect("out of memory");
         let page_table_config =
             PageTableConfig::new(PageTableMode::Sv39, 0, page_table_paddr.ppn());
         allocated_frames.push(TaskAllocatedFrame::new(page_table_paddr, 1));
 
+        println!("page_table_paddr: {page_table_paddr}");
+
         let page_table = unsafe { &mut *page_table_paddr.to_hhdm().to_mut_ptr::<PageTable>() };
         build_task_page_table(page_table);
+
+        println!("page table has been built");
 
         let mut program_end_vaddr = Self::USER_BOTTOM.addr;
 
@@ -126,8 +138,12 @@ impl Task {
             }
 
             let frame_count = vm_range.len() / FrameMgr::FRAME_SIZE;
-            let frame_paddr = { get_frame_mgr().alloc(frame_count) }.expect("out of memory");
+            let frame_paddr =
+                { frame_alloc().alloc_contiguous(frame_count) }.expect("out of memory");
             allocated_frames.push(TaskAllocatedFrame::new(frame_paddr, frame_count));
+
+            println!("[program section] frame_paddr: {frame_paddr}");
+            println!("[program section] frame_count: {frame_count}");
 
             let mut flags = PageTableEntry::FLAG_USER;
 
@@ -143,26 +159,38 @@ impl Task {
                 flags |= PageTableEntry::FLAG_READ;
             }
 
+            println!("[program section] writing program section to frame...");
+
             unsafe {
                 let offset = unaligned_vm_range.start - vm_range.start;
                 let dst = frame_paddr.to_hhdm().to_mut_ptr::<u8>().add(offset);
                 let src = &elf_file[file_range.clone()];
 
+                println!("[program section] offset: {offset}");
+                println!("[program section] src: 0x{:x}", src.as_ptr() as usize);
+                println!("[program section] dst: 0x{:x}", dst as usize);
+                println!("[program section] src.len(): {} KiB", src.len() / 1024);
+
                 // copy
                 core::ptr::copy_nonoverlapping(src.as_ptr(), dst, src.len());
 
+                println!("[program section] program section has been written to frame");
+
                 let bss_size = unaligned_vm_range.len() - file_range.len();
+
+                println!("[program section] bss_size: {} KiB", bss_size / 1024);
 
                 if bss_size != 0 {
                     // zero out the rest
                     core::ptr::write_bytes(dst.add(src.len()), 0, bss_size);
                 }
 
+                println!("[program section] bss has been zeroed out");
+
                 // map program section to page table
                 {
-                    let mut frame_mgr = get_frame_mgr();
                     map_range(
-                        &mut frame_mgr,
+                        frame_alloc(),
                         page_table,
                         VAddr::from_raw_addr(vm_range.start),
                         frame_paddr,
@@ -170,13 +198,15 @@ impl Task {
                         flags,
                     )
                 };
+
+                println!("[program section] program section has been mapped to page table");
             }
         }
 
         // Kernel stack: 8 KiB
         let kernel_stack_frame_count = 2;
         let kernel_stack_paddr =
-            { get_frame_mgr().alloc(kernel_stack_frame_count) }.expect("out of memory");
+            { frame_alloc().alloc_contiguous(kernel_stack_frame_count) }.expect("out of memory");
         let kernel_stack = TaskMemRange::new(
             kernel_stack_paddr.to_hhdm(),
             kernel_stack_paddr.to_hhdm() + kernel_stack_frame_count * FrameMgr::FRAME_SIZE,
@@ -189,7 +219,7 @@ impl Task {
         // User stack: 16 KiB
         let user_stack_frame_count = 4;
         let user_stack_paddr =
-            { get_frame_mgr().alloc(user_stack_frame_count) }.expect("out of memory");
+            { frame_alloc().alloc_contiguous(user_stack_frame_count) }.expect("out of memory");
         let user_stack = TaskMemRange::new(
             Self::USER_TOP_0,
             Self::USER_TOP_0 - user_stack_frame_count * FrameMgr::FRAME_SIZE,
@@ -206,9 +236,8 @@ impl Task {
 
         // map user stack
         {
-            let mut frame_mgr = get_frame_mgr();
             map_range(
-                &mut frame_mgr,
+                frame_alloc(),
                 page_table,
                 user_stack.bottom,
                 user_stack_paddr,
