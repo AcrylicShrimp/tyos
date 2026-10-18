@@ -1,8 +1,8 @@
 pub struct SyscallId;
 
 impl SyscallId {
-    pub const READ: usize = 63;
-    pub const WRITE: usize = 64;
-    pub const EXIT: usize = 93;
-    pub const GROW_HEAP: usize = 306;
+    pub const EXIT: usize = 0x0001;
+    pub const GROW_HEAP: usize = 0x0010;
+    pub const READ: usize = 0x0100;
+    pub const WRITE: usize = 0x0101;
 }
