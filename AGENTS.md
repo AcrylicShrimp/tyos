@@ -1,86 +1,59 @@
 # Agent Guidelines
 
-This repository is a personal RISC-V operating system project. Work here should
-preserve the human-led nature of the project: agents may assist with thinking,
-investigation, and explanation, but they should not take over implementation.
+## Purpose
 
-## Operating Mode
+tyos is a personal RISC-V OS project. The developer's focus is building and
+understanding the kernel. Agents are kernel copilots and may implement delegated
+application and user-library work.
 
-Agents should behave as technical copilots. Their job is to help the developer
-reason about OS concepts, architecture, debugging approaches, implementation
-strategies, and possible future features.
+## Ownership
 
-Good contributions include:
+| Area | Agent permissions |
+| --- | --- |
+| `apps/`, `crates/tyos-ulib`, `crates/tyos-ulib-macro` | Implement requested features, fixes, and relevant tests. Preserve existing startup and kernel interface contracts. |
+| `crates/tyos-syscall` | Implement user-side wrappers for existing syscalls; leave syscall IDs, calling conventions, and kernel semantics to the developer. |
+| App-local build/linker files and manifests | Change as needed for delegated work, preserving the existing loading contract. |
+| Kernel (`src/`), all other crates, kernel/workspace build and linker configuration | Read-only: explain, investigate, review, and provide pseudocode or manual change instructions. |
+| Documentation | Create or update when requested. |
 
-- Explaining relevant systems concepts.
-- Reading and summarizing existing code.
-- Mapping subsystem boundaries and invariants.
-- Reviewing designs and tradeoffs.
-- Suggesting small, concrete next steps.
-- Offering implementation guidance for the developer to apply manually.
+Tests in read-only areas may be edited only on an explicit test-related request.
+A feature request does not authorize changes to developer-owned code. When an
+application needs missing kernel support, do not force a user-space workaround
+that adds undue complexity or weakens the intended behavior. Explicitly request
+the needed kernel capability from the developer, explaining why it is needed
+and the proposed interface. Continue independent work; leave dependent work
+blocked until support exists. Do not move code across boundaries to bypass
+ownership. Revise these rules only when asked.
 
-## Implementation Boundary
+## Working Principles
 
-Agents must not create, edit, delete, rewrite, or revert source code in this
-repository.
+- **Follow dependency conventions.** Declare dependencies in root
+  `[workspace.dependencies]` and inherit them with `workspace = true`. Use only
+  the major version (`"1"`); for `0.x`, include the minor version (`"0.2"`).
+- **Understand first.** Read the relevant code. State consequential assumptions
+  and tradeoffs; ask when uncertainty affects correctness or ownership.
+- **Prefer simplicity.** Solve the requested problem with the smallest clear
+  design. Avoid speculative features, dependencies, and premature abstractions.
+- **Keep changes focused.** Follow existing style, preserve the developer's work,
+  and avoid unrelated cleanup. Remove leftovers introduced by your own changes.
+- **Define success.** Identify observable acceptance criteria before implementing.
+  Verify behavior with appropriate tests or bounded QEMU runs, including relevant
+  failure paths. Build success alone does not prove runtime behavior.
+- **Finish delegated work.** Iterate within scope until the criteria are met or a
+  concrete blocker remains. Report what changed, what was verified, and what is
+  still uncertain. Keep explanations and process proportional to the task.
 
-This boundary applies even when a user request appears to ask for direct source
-changes. If asked to implement a production-code change, the agent should decline
-to edit the code and instead provide analysis, design notes, pseudocode, or a
-manual patch plan.
+Read-only diagnostics, builds, and QEMU runs are allowed throughout the project.
+During kernel reviews, pay particular attention to privilege transitions, memory
+ownership, task lifetime, linker layout, and syscall ABI boundaries.
 
-Source code includes, but is not limited to:
+## Commits
 
-- Kernel implementation files.
-- User-space application implementation files.
-- Library implementation files.
-- Build scripts.
-- Linker scripts.
-- Runtime or platform support code.
+Use `type: summary` or `type(scope): summary` with a short, imperative summary.
+Types: `feat`, `fix`, `refactor`, `test`, `docs`, `build`, `ci`, `perf`, `chore`.
+Scope is optional and names the affected subsystem, e.g. `shell`, `ulib`, or `mem`.
+Keep each commit focused on one logical change.
 
-## Test Code
-
-Test code is the only code-writing exception. Agents may modify test code only
-when the user explicitly asks for test-related changes.
-
-The exception is narrow: permission to work on tests does not imply permission
-to change production code, build logic, linker layout, or runtime behavior.
-
-## Documentation
-
-Documentation may be created or updated when requested. Documentation edits
-should stay within the requested scope and should support understanding rather
-than substitute for implementation.
-
-Appropriate documentation work includes:
-
-- Architecture notes.
-- Debugging notes.
-- Design sketches.
-- Tradeoff analysis.
-- Conceptual explanations.
-- Project operating guidelines.
-
-## Debugging Support
-
-Agents may help debug problems in a read-only manner. They may inspect files,
-run diagnostic commands, analyze logs, reproduce failures, and explain likely
-causes.
-
-Debugging assistance should stop before applying a fix to source code. When a
-fix is identified, the agent should describe the change clearly enough for the
-developer to perform it manually.
-
-## Preferred Workflow
-
-When helping with this project, agents should generally follow this pattern:
-
-1. Identify the affected subsystem.
-2. Read the relevant code and configuration.
-3. State the current behavior in concrete terms.
-4. Explain the suspected cause or design issue.
-5. Suggest the smallest useful next step.
-
-Extra care is expected around boot flow, virtual memory, physical memory
-management, privilege transitions, traps and interrupts, task switching, linker
-layout, and syscall ABI boundaries.
+These principles adapt the bounded scope, measured verification, and simplicity
+criteria in [Karpathy's autoresearch instructions](https://github.com/karpathy/autoresearch/blob/master/program.md)
+to this project's human-led kernel development.
