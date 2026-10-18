@@ -21,6 +21,14 @@ fn main() -> isize {
         println!("v[{}] = {}", index, element);
     }
 
+    println!("shell: triggering page fault");
+
+    unsafe {
+        core::arch::asm!("sd zero, 0(zero)", options(nostack));
+    }
+
+    println!("shell: survived");
+
     let mut line_reader = LineReader::new();
 
     loop {

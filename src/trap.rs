@@ -1,4 +1,8 @@
-use crate::{syscall::syscall_handler, timer_interrupt_handler::timer_interrupt_handler};
+use crate::{
+    scheduler::{current_pid, exit_task},
+    syscall::syscall_handler,
+    timer_interrupt_handler::timer_interrupt_handler,
+};
 use tyos_uart::println;
 
 #[repr(C, align(16))]
@@ -182,11 +186,19 @@ pub extern "C" fn trap_handler(ctx: &mut TrapContext) {
                 ctx.regs[8] = result as usize; // a0 (return value)
                 ctx.sepc += 4;
             }
-            12 => {
-                panic!("[EXCEPTION] instruction page fault at 0x{stval:x}");
-            }
-            13 | 15 => {
-                panic!("[EXCEPTION] page fault at 0x{stval:x}");
+            12 | 13 | 15 => {
+                let from_user = ctx.sstatus & (1 << 8) == 0;
+
+                if from_user {
+                    println!("[EXCEPTION] user page fault at 0x{stval:x}");
+                    exit_task(current_pid(), -44);
+                }
+
+                // kernel page fault
+                panic!(
+                    "[EXCEPTION] kernel page fault at 0x{stval:x}, epc={:x}",
+                    ctx.sepc,
+                );
             }
             _ => {
                 panic!(
