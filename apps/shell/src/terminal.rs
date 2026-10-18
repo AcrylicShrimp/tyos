@@ -1,4 +1,4 @@
-//! Buffered console transport and terminal output, without command policy.
+//! Incremental console transport and terminal output, without command policy.
 
 use core::fmt::{self, Write};
 
@@ -11,9 +11,6 @@ pub trait Console: Write {
 
 pub struct Terminal<'a, C> {
     console: &'a mut C,
-    buffer: [u8; 128],
-    pos: usize,
-    len: usize,
     decoder: Decoder,
     pending: Option<Key>,
 }
@@ -22,9 +19,6 @@ impl<'a, C: Console> Terminal<'a, C> {
     pub fn new(console: &'a mut C) -> Self {
         Self {
             console,
-            buffer: [0; 128],
-            pos: 0,
-            len: 0,
             decoder: Decoder::default(),
             pending: None,
         }
@@ -34,17 +28,14 @@ impl<'a, C: Console> Terminal<'a, C> {
         if let Some(key) = self.pending.take() {
             return Ok(key);
         }
+        // Do not prefetch bytes past Enter: the next reader may be a child
+        // process with its own console. Line text still grows in the editor.
+        let mut byte = [0];
         loop {
-            if self.pos == self.len {
-                self.len = self.console.read(&mut self.buffer)?;
-                self.pos = 0;
-                if self.len == 0 {
-                    continue;
-                }
+            if self.console.read(&mut byte)? == 0 {
+                continue;
             }
-            let byte = self.buffer[self.pos];
-            self.pos += 1;
-            let [first, second] = self.decoder.feed(byte);
+            let [first, second] = self.decoder.feed(byte[0]);
             self.pending = second;
             if let Some(key) = first {
                 return Ok(key);
@@ -131,18 +122,16 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn buffered_read_keeps_bytes_after_enter() {
+    fn reads_keep_bytes_after_enter_in_the_console() {
         let mut console = FakeConsole::new(b"a\nb\n", 128);
-        let mut terminal = Terminal::new(&mut console);
-        for expected in [
-            Key::Character('a'),
-            Key::Enter,
-            Key::Character('b'),
-            Key::Enter,
-        ] {
-            assert_eq!(terminal.read_key(), Ok(expected));
+        {
+            let mut terminal = Terminal::new(&mut console);
+            assert_eq!(terminal.read_key(), Ok(Key::Character('a')));
+            assert_eq!(terminal.read_key(), Ok(Key::Enter));
         }
-        assert_eq!(terminal.read_key(), Err(-9));
+        let mut remaining = [0; 128];
+        assert_eq!(console.read(&mut remaining), Ok(2));
+        assert_eq!(&remaining[..2], b"b\n");
     }
 
     #[test]

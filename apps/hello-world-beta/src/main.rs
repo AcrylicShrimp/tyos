@@ -4,7 +4,7 @@
 use tyos_ulib::{entry_point, println};
 
 #[entry_point]
-fn main() -> isize {
+fn main(arg0: usize) -> isize {
     for count in 0..10 {
         println!("beta: {}", count);
 

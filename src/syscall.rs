@@ -1,11 +1,13 @@
 mod sstatus_sum_guard;
 
-use crate::{scheduler, syscall::sstatus_sum_guard::SstatusSumGuard};
+use crate::{scheduler, syscall::sstatus_sum_guard::SstatusSumGuard, user_apps};
+use tyos_sbi::shutdown::shutdown;
 use tyos_syscall::SyscallId;
 use tyos_uart::print;
 
 pub fn syscall_handler(syscall_id: usize, arg0: usize, arg1: usize, arg2: usize) -> isize {
     match syscall_id {
+        SyscallId::SHUTDOWN => sys_shutdown(),
         SyscallId::EXIT => {
             let code = arg0 as isize;
             sys_exit(code)
@@ -26,8 +28,22 @@ pub fn syscall_handler(syscall_id: usize, arg0: usize, arg1: usize, arg2: usize)
             let len = arg2;
             sys_write(fd, buf, len)
         }
+        SyscallId::SPAWN => {
+            let name = arg0 as *const u8;
+            let len = arg1;
+            let arg0 = arg2;
+            sys_spawn(name, len, Some(arg0))
+        }
+        SyscallId::WAIT => {
+            let pid = arg0;
+            sys_wait(pid)
+        }
         _ => -1,
     }
+}
+
+fn sys_shutdown() -> ! {
+    shutdown();
 }
 
 fn sys_exit(code: isize) -> ! {
@@ -87,4 +103,29 @@ fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
         }
         _ => -1,
     }
+}
+
+fn sys_spawn(name: *const u8, len: usize, arg0: Option<usize>) -> isize {
+    let _sstatus_guard = SstatusSumGuard::new();
+    let name = unsafe { core::slice::from_raw_parts(name, len) };
+    let name = match core::str::from_utf8(name) {
+        Ok(name) => name,
+        Err(_) => return -1,
+    };
+
+    let elf_file = match name {
+        "shell" => user_apps::USER_APP_SHELL_ELF_FILE,
+        "hello-world-alpha" => user_apps::USER_APP_HELLO_WORLD_ALPHA_ELF_FILE,
+        "hello-world-beta" => user_apps::USER_APP_HELLO_WORLD_BETA_ELF_FILE,
+        _ => return -1,
+    };
+
+    match scheduler::spawn_task(elf_file, arg0) {
+        Ok(pid) => pid as isize,
+        Err(_) => -1,
+    }
+}
+
+fn sys_wait(pid: usize) -> isize {
+    scheduler::wait_task(pid).unwrap_or(-1)
 }

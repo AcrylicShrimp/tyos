@@ -1,13 +1,12 @@
 use crate::{
     pid_allocator::PidAllocator,
     task::{
-        Task, TaskContext, TaskState, address_space::TaskAddressSpace, elf_importer::import_elf,
-        program::ProgramDefConfig,
+        Task, TaskContext, TaskState, TaskWaitTarget, address_space::TaskAddressSpace,
+        elf_importer::import_elf, program::ProgramDefConfig,
     },
 };
-use alloc::{collections::btree_map::BTreeMap, vec::Vec};
+use alloc::{collections::btree_map::BTreeMap, format, vec::Vec};
 use spinning_top::Spinlock;
-use tyos_uart::println;
 
 static SCHEDULER: Spinlock<Scheduler> = Spinlock::new(Scheduler::new());
 
@@ -34,17 +33,17 @@ pub fn spawn_idle_task() {
     scheduler.spawn_idle_task();
 }
 
-pub fn spawn_task(elf_file: &[u8]) {
+pub fn spawn_task(elf_file: &[u8], args0: Option<usize>) -> Result<usize, alloc::string::String> {
     let mut scheduler = SCHEDULER.lock();
 
-    scheduler.spawn_task(elf_file);
+    scheduler.spawn_task(elf_file, args0)
 }
 
-pub fn exit_task(pid: usize, _exit_code: isize) {
+pub fn exit_task(pid: usize, exit_code: isize) {
     let context_switcher = {
         let mut scheduler = SCHEDULER.lock();
 
-        if scheduler.stop_task(pid) {
+        if scheduler.stop_task(pid, exit_code) {
             scheduler.schedule()
         } else {
             None
@@ -54,6 +53,35 @@ pub fn exit_task(pid: usize, _exit_code: isize) {
     if let Some(context_switcher) = context_switcher {
         context_switcher.switch();
     }
+}
+
+pub fn wait_task(pid: usize) -> Result<isize, &'static str> {
+    {
+        let mut scheduler = SCHEDULER.lock();
+
+        if let Some(exit_code) = scheduler.join_task(pid)? {
+            return Ok(exit_code);
+        }
+    }
+
+    let context_switcher = {
+        let mut scheduler = SCHEDULER.lock();
+        scheduler.schedule()
+    };
+
+    if let Some(context_switcher) = context_switcher {
+        context_switcher.switch();
+    }
+
+    {
+        let scheduler = SCHEDULER.lock();
+
+        if let Some(exit_code) = scheduler.get_exit_code(pid) {
+            return Ok(exit_code);
+        }
+    }
+
+    Err("wait_task: task has no exit code")
 }
 
 pub fn schedule() {
@@ -81,6 +109,8 @@ struct Scheduler {
     pid_allocator: PidAllocator,
     current_pid: usize,
     stopping_tasks: Vec<usize>,
+    task_exit_codes: BTreeMap<usize, isize>,
+    waiting_tasks: BTreeMap<usize, Vec<usize>>,
 }
 
 impl Scheduler {
@@ -90,6 +120,8 @@ impl Scheduler {
             pid_allocator: PidAllocator::new(),
             current_pid: 0,
             stopping_tasks: Vec::new(),
+            task_exit_codes: BTreeMap::new(),
+            waiting_tasks: BTreeMap::new(),
         }
     }
 
@@ -103,7 +135,11 @@ impl Scheduler {
         self.task_map.insert(pid, task);
     }
 
-    fn spawn_task(&mut self, elf_file: &[u8]) {
+    fn spawn_task(
+        &mut self,
+        elf_file: &[u8],
+        args0: Option<usize>,
+    ) -> Result<usize, alloc::string::String> {
         let program = match import_elf(
             elf_file,
             &ProgramDefConfig {
@@ -112,19 +148,19 @@ impl Scheduler {
         ) {
             Ok(program) => program,
             Err(err) => {
-                panic!("failed to import elf file: {err:#?}");
+                return Err(format!("failed to import elf file: {err:#?}"));
             }
         };
 
-        println!("program is imported");
-
         let pid = self.pid_allocator.alloc();
-        let task = Task::from_loaded_program(pid, program);
+        let task = Task::from_loaded_program(pid, program, args0);
 
         self.task_map.insert(pid, task);
+
+        Ok(pid)
     }
 
-    fn stop_task(&mut self, pid: usize) -> bool {
+    fn stop_task(&mut self, pid: usize, exit_code: isize) -> bool {
         if pid == 0 {
             // idle task cannot be stopped
             return false;
@@ -139,14 +175,47 @@ impl Scheduler {
 
         // TODO: check if the task is privileged and the caller has permission to stop it
 
-        if task.state() == TaskState::Exited || task.state() == TaskState::Stopping {
+        if task.state().is_stopping() || task.state().is_exited() {
             return false;
         }
 
-        task.set_state(TaskState::Stopping);
+        task.set_state(TaskState::Stopping(exit_code));
         self.stopping_tasks.push(pid);
 
         true
+    }
+
+    fn join_task(&mut self, pid: usize) -> Result<Option<isize>, &'static str> {
+        if pid == 0 {
+            // idle task cannot be joined
+            return Err("idle task cannot be joined");
+        }
+
+        if pid == self.current_pid {
+            // cannot join the currently running task
+            return Err("cannot join the currently running task");
+        }
+
+        if !self.task_map.contains_key(&pid) {
+            match self.task_exit_codes.get(&pid) {
+                Some(&exit_code) => return Ok(Some(exit_code)),
+                None => return Err("task not found"),
+            }
+        }
+
+        if let Some(task) = self.task_map.get_mut(&self.current_pid) {
+            task.set_state(TaskState::Waiting(TaskWaitTarget::Task { pid }));
+            self.waiting_tasks
+                .entry(pid)
+                .or_default()
+                .push(self.current_pid);
+        }
+
+        Ok(None)
+    }
+
+    fn get_exit_code(&self, pid: usize) -> Option<isize> {
+        self.task_exit_codes.get(&pid).copied()
     }
 
     fn schedule(&mut self) -> Option<ContextSwitcher> {
@@ -157,9 +226,7 @@ impl Scheduler {
         let next_pid = self
             .task_map
             .range((self.current_pid + 1)..)
-            .find(|(_, task)| {
-                task.state() != TaskState::Exited && task.state() != TaskState::Stopping
-            })
+            .find(|(_, task)| task.state() == TaskState::Ready)
             .map(|(pid, _)| *pid)
             .unwrap_or_else(|| *self.task_map.keys().next().unwrap_or(&0));
 
@@ -167,9 +234,12 @@ impl Scheduler {
             return None;
         }
 
+        // check if the next task is waiting for a task that is already finished
+        // self.task_map.get(&next_pid)
+
         let current_task_context = match self.task_map.get_mut(&self.current_pid) {
             Some(task) => {
-                if task.state() != TaskState::Exited && task.state() != TaskState::Stopping {
+                if task.state() == TaskState::Running {
                     task.set_state(TaskState::Ready);
                 }
 
@@ -204,9 +274,26 @@ impl Scheduler {
             }
 
             if let Some(task) = self.task_map.remove(pid) {
-                // TODO: store the exit code and pass to the joiner
-                // NOTE: the joiner can be implemented as a object that waits for the task and returns the exit code;
-                self.pid_allocator.free(*pid);
+                let exit_code = if let TaskState::Stopping(exit_code) = task.state() {
+                    self.task_exit_codes.insert(*pid, exit_code);
+                    Some(exit_code)
+                } else {
+                    None
+                };
+                self.task_exit_codes.insert(*pid, exit_code.unwrap_or(0));
+
+                if let Some(waiting_tasks) = self.waiting_tasks.remove(pid) {
+                    for waiting_pid in waiting_tasks {
+                        if let Some(task) = self.task_map.get_mut(&waiting_pid)
+                            && task.state()
+                                == TaskState::Waiting(TaskWaitTarget::Task { pid: *pid })
+                        {
+                            task.set_state(TaskState::Ready);
+                        }
+                    }
+                }
+
+                // self.pid_allocator.free(*pid);
 
                 unsafe {
                     task.destroy_addr_space();

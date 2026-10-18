@@ -1,4 +1,4 @@
-//! Built-ins run in the shell task and need no process-management syscalls.
+//! Command validation and built-ins. Process execution is returned to the session.
 
 use alloc::string::String;
 use core::fmt::{self, Write};
@@ -7,6 +7,8 @@ use core::fmt::{self, Write};
 pub enum Outcome {
     Continue,
     Exit(isize),
+    Run { program: String, arg: usize },
+    PowerOff,
 }
 
 const COMMANDS: &[(&str, &str, &str)] = &[
@@ -17,7 +19,13 @@ const COMMANDS: &[(&str, &str, &str)] = &[
         "print arguments separated by spaces",
     ),
     ("clear", "clear", "clear the terminal screen"),
+    (
+        "run",
+        "run <program> [arg]",
+        "run a program and wait; arg is an unsigned decimal integer (default: 0)",
+    ),
     ("exit", "exit [code]", "exit the shell (default code: 0)"),
+    ("poweroff", "poweroff", "shut down the whole system"),
 ];
 
 pub fn execute(words: &[String], out: &mut impl Write) -> Result<Outcome, fmt::Error> {
@@ -62,6 +70,27 @@ pub fn execute(words: &[String], out: &mut impl Write) -> Result<Outcome, fmt::E
             writeln!(out)?;
         }
         "clear" if args.is_empty() => out.write_str("\x1b[2J\x1b[H")?,
+        "poweroff" if args.is_empty() => return Ok(Outcome::PowerOff),
+        "run" if (1..=2).contains(&args.len()) => {
+            if args[0].is_empty() {
+                writeln!(out, "run: program name must not be empty")?;
+                return Ok(Outcome::Continue);
+            }
+            let arg = match args.get(1) {
+                None => 0,
+                Some(arg) => match arg.parse::<usize>() {
+                    Ok(arg) => arg,
+                    Err(_) => {
+                        writeln!(out, "run: arg must be an unsigned decimal integer")?;
+                        return Ok(Outcome::Continue);
+                    }
+                },
+            };
+            return Ok(Outcome::Run {
+                program: args[0].clone(),
+                arg,
+            });
+        }
         "exit" if args.len() <= 1 => {
             let code = match args.first() {
                 None => 0,
@@ -138,6 +167,60 @@ mod tests {
         assert!(run("clear extra").1.starts_with("usage:"));
         assert_eq!(run("missing").0, Outcome::Continue);
         assert!(run("missing").1.contains("unknown command: missing"));
+    }
+
+    #[test]
+    fn run_validates_program_and_optional_scalar_argument() {
+        assert_eq!(
+            run("run hello-world-alpha"),
+            (
+                Outcome::Run {
+                    program: String::from("hello-world-alpha"),
+                    arg: 0
+                },
+                String::new()
+            )
+        );
+        assert_eq!(
+            run("run 'hello-world-beta' 42").0,
+            Outcome::Run {
+                program: String::from("hello-world-beta"),
+                arg: 42
+            }
+        );
+        assert_eq!(
+            run(&alloc::format!("run shell {}", usize::MAX)).0,
+            Outcome::Run {
+                program: String::from("shell"),
+                arg: usize::MAX
+            }
+        );
+        for line in [
+            "run",
+            "run ''",
+            "run shell 1 2",
+            "run shell -1",
+            "run shell text",
+            "run shell 0x1000",
+            "run shell 999999999999999999999999999999999999999",
+        ] {
+            let (outcome, output) = run(line);
+            assert_eq!(outcome, Outcome::Continue, "{line}");
+            assert!(!output.is_empty(), "{line}");
+        }
+        assert_eq!(run("run --help").0, Outcome::Continue);
+        assert_eq!(run("run --help").1, run("help run").1);
+    }
+
+    #[test]
+    fn poweroff_requires_no_arguments_and_help_does_not_shut_down() {
+        assert_eq!(run("poweroff"), (Outcome::PowerOff, String::new()));
+        assert_eq!(
+            run("poweroff extra"),
+            (Outcome::Continue, String::from("usage: poweroff\n"))
+        );
+        assert_eq!(run("poweroff --help").0, Outcome::Continue);
+        assert_eq!(run("poweroff --help").1, run("help poweroff").1);
     }
 
     #[test]

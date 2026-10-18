@@ -52,8 +52,8 @@ pub struct TaskAddressSpace {
 impl TaskAddressSpace {
     pub const LOWER_HALF_END: usize = 0x0000_0040_0000_0000;
 
-    /// Kernel Stack: 16 KiB
-    pub const KERNEL_STACK_FRAME_LEN: usize = 4;
+    /// Kernel Stack: 64 KiB
+    pub const KERNEL_STACK_FRAME_LEN: usize = 16;
     pub const KERNEL_STACK_SIZE: usize = Self::KERNEL_STACK_FRAME_LEN * FrameMgr::FRAME_SIZE;
 
     pub const KERNEL_STACK_GUARD_SIZE: usize = FrameMgr::FRAME_SIZE;

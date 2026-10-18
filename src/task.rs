@@ -13,8 +13,24 @@ use tyos_mem::{
 pub enum TaskState {
     Ready,
     Running,
-    Stopping,
+    Stopping(isize),
     Exited,
+    Waiting(TaskWaitTarget),
+}
+
+impl TaskState {
+    pub fn is_stopping(self) -> bool {
+        matches!(self, TaskState::Stopping(_))
+    }
+
+    pub fn is_exited(self) -> bool {
+        matches!(self, TaskState::Exited)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskWaitTarget {
+    Task { pid: usize },
 }
 
 #[derive(Debug)]
@@ -35,7 +51,7 @@ impl Task {
         }
     }
 
-    pub fn from_loaded_program(pid: usize, program: LoadedProgram) -> Self {
+    pub fn from_loaded_program(pid: usize, program: LoadedProgram, args0: Option<usize>) -> Self {
         Self {
             pid,
             state: TaskState::Ready,
@@ -48,6 +64,7 @@ impl Task {
                 program.addr_space.kernel_stack_range().end,
                 program.addr_space.user_main_thread_stack_range().end,
                 program.entry,
+                args0,
             ),
             addr_space: Some(program.addr_space),
         }
@@ -112,6 +129,7 @@ impl TaskContext {
         kernel_stack_top: VAddr,
         user_main_thread_stack_top: VAddr,
         entry: VAddr,
+        args0: Option<usize>,
     ) -> Self {
         Self {
             satp: page_table_config.config(),
@@ -120,7 +138,7 @@ impl TaskContext {
             s: [
                 user_main_thread_stack_top.addr,
                 entry.addr,
-                0,
+                args0.unwrap_or(0),
                 0,
                 0,
                 0,
@@ -136,12 +154,17 @@ impl TaskContext {
 }
 
 #[unsafe(naked)]
-extern "C" fn task_entry_wrapper() -> ! {
-    core::arch::naked_asm!("move a0, s0", "move a1, s1", "call task_entry");
+extern "C" fn task_entry_wrapper(arg1: usize) -> ! {
+    core::arch::naked_asm!(
+        "move a0, s0",
+        "move a1, s1",
+        "move a2, s2",
+        "call task_entry"
+    );
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn task_entry(user_stack_top: usize, entry: usize) -> ! {
+extern "C" fn task_entry(user_stack_top: usize, entry: usize, arg0: usize) -> ! {
     let mut kernel_sp: usize;
 
     // back-up kernel stack pointer
@@ -174,7 +197,7 @@ extern "C" fn task_entry(user_stack_top: usize, entry: usize) -> ! {
     // setup entry point
     unsafe {
         core::arch::asm!("csrw sepc, {}", in(reg) entry);
-        core::arch::asm!("li a0, 0");
+        core::arch::asm!("mv a0, {}", in(reg) arg0);
         core::arch::asm!("li a1, 0");
         core::arch::asm!("li ra, 0");
     }
