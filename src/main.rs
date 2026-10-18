@@ -143,8 +143,8 @@ pub extern "C" fn kmain(_hart_id: usize, dtb_paddr: usize) -> ! {
     println!("kernel initialized");
 
     spawn_idle_task();
-    spawn_task(USER_APP_HELLO_WORLD_ALPHA_ELF_FILE);
-    spawn_task(USER_APP_HELLO_WORLD_BETA_ELF_FILE);
+    // spawn_task(USER_APP_HELLO_WORLD_ALPHA_ELF_FILE);
+    // spawn_task(USER_APP_HELLO_WORLD_BETA_ELF_FILE);
     spawn_task(USER_APP_SHELL_ELF_FILE);
 
     set_timer(compute_next_ticks());
