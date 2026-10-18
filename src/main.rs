@@ -30,6 +30,10 @@ use tyos_mem::addr::PAddr;
 use tyos_sbi::set_timer::set_timer;
 use tyos_uart::println;
 
+static USER_APP_HELLO_WORLD_ALPHA_ELF_FILE: &[u8] =
+    include_bytes!("../target/riscv64gc-unknown-none-elf/debug/hello-world-alpha");
+static USER_APP_HELLO_WORLD_BETA_ELF_FILE: &[u8] =
+    include_bytes!("../target/riscv64gc-unknown-none-elf/debug/hello-world-beta");
 static USER_APP_SHELL_ELF_FILE: &[u8] =
     include_bytes!("../target/riscv64gc-unknown-none-elf/debug/shell");
 
@@ -139,6 +143,8 @@ pub extern "C" fn kmain(_hart_id: usize, dtb_paddr: usize) -> ! {
     println!("kernel initialized");
 
     spawn_idle_task();
+    spawn_task(USER_APP_HELLO_WORLD_ALPHA_ELF_FILE);
+    spawn_task(USER_APP_HELLO_WORLD_BETA_ELF_FILE);
     spawn_task(USER_APP_SHELL_ELF_FILE);
 
     set_timer(compute_next_ticks());
