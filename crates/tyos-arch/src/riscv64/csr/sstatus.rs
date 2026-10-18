@@ -10,6 +10,12 @@ pub fn read() -> Sstatus {
     Sstatus(current)
 }
 
+pub unsafe fn write(sstatus: Sstatus) {
+    unsafe {
+        core::arch::asm!("csrw sstatus, {}", in(reg) sstatus.0);
+    }
+}
+
 pub unsafe fn set_flags(flags: SstatusFlags) {
     unsafe {
         core::arch::asm!("csrs sstatus, {}", in(reg) flags.0);
@@ -69,6 +75,9 @@ impl SstatusFlags {
 
     /// Supervisor Previous Privilege Level
     pub const SPP: Self = Self(1 << 8);
+
+    /// Supervisor User Memory Access
+    pub const SUM: Self = Self(1 << 18);
 
     pub fn bits(self) -> usize {
         self.0

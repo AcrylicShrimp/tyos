@@ -13,6 +13,7 @@ use tyos_mem::{
 pub enum TaskState {
     Ready,
     Running,
+    Stopping,
     Exited,
 }
 
@@ -71,6 +72,14 @@ impl Task {
     pub fn set_state(&mut self, state: TaskState) {
         self.state = state;
     }
+
+    pub unsafe fn destroy_addr_space(mut self) {
+        if let Some(addr_space) = self.addr_space.take() {
+            unsafe {
+                addr_space.destroy();
+            }
+        }
+    }
 }
 
 #[repr(C)]
@@ -98,7 +107,7 @@ impl TaskContext {
     ) -> Self {
         Self {
             satp: page_table_config.config(),
-            ra: task_entry_wrapper as usize,
+            ra: task_entry_wrapper as *const () as usize,
             sp: kernel_stack_top.addr,
             s: [
                 user_main_thread_stack_top.addr,

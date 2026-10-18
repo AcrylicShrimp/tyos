@@ -29,6 +29,7 @@ fdt.workspace = true
 goblin.workspace = true
 linked_list_allocator.workspace = true
 spinning_top.workspace = true
+tyos-arch.workspace = true
 tyos-mem.workspace = true
 tyos-sbi.workspace = true
 tyos-syscall.workspace = true

@@ -1,4 +1,5 @@
 use crate::scheduler;
+use tyos_arch::raw::csr;
 use tyos_syscall::SyscallId;
 use tyos_uart::print;
 
@@ -21,6 +22,31 @@ pub fn syscall_handler(syscall_id: usize, arg0: usize, arg1: usize, arg2: usize)
 fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
     match fd {
         1 => {
+            struct SstatusSumGuard {
+                old_sstatus: csr::sstatus::Sstatus,
+            }
+
+            impl SstatusSumGuard {
+                pub fn new() -> Self {
+                    let old_sstatus = unsafe {
+                        csr::sstatus::read_and_set_flags(csr::sstatus::SstatusFlags::SUM)
+                    };
+
+                    SstatusSumGuard { old_sstatus }
+                }
+            }
+
+            impl Drop for SstatusSumGuard {
+                fn drop(&mut self) {
+                    if self.old_sstatus.contains(csr::sstatus::SstatusFlags::SUM) {
+                        unsafe { csr::sstatus::set_flags(csr::sstatus::SstatusFlags::SUM) };
+                    } else {
+                        unsafe { csr::sstatus::clear_flags(csr::sstatus::SstatusFlags::SUM) };
+                    }
+                }
+            }
+
+            let _sstatus_guard = SstatusSumGuard::new();
             let slice = unsafe { core::slice::from_raw_parts(buf, len) };
 
             match core::str::from_utf8(slice) {
@@ -37,5 +63,5 @@ fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
 
 fn sys_exit(code: isize) -> ! {
     scheduler::exit_task(scheduler::current_pid(), code);
-    unreachable!()
+    unreachable!("sys_exit should not return");
 }

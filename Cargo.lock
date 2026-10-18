@@ -148,6 +148,7 @@ dependencies = [
  "goblin",
  "linked_list_allocator",
  "spinning_top 0.3.0",
+ "tyos-arch",
  "tyos-mem",
  "tyos-sbi",
  "tyos-syscall",

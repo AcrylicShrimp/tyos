@@ -29,11 +29,11 @@ pub fn spawn_task(elf_file: &[u8]) {
     scheduler.spawn_task(elf_file);
 }
 
-pub fn exit_task(pid: usize, exit_code: isize) {
+pub fn exit_task(pid: usize, _exit_code: isize) {
     let context_switcher = {
         let mut scheduler = SCHEDULER.lock();
 
-        if scheduler.stop_task(pid, exit_code) {
+        if scheduler.stop_task(pid) {
             scheduler.schedule()
         } else {
             None
@@ -54,19 +54,22 @@ pub fn schedule() {
     if let Some(context_switcher) = context_switcher {
         context_switcher.switch();
     }
-}
 
-#[derive(Debug, Clone, Copy)]
-struct ExitedTask {
-    pid: usize,
-    exit_code: isize,
+    // housekeeping: cleanup stopped tasks if the current task is the idle task
+    {
+        let mut scheduler = SCHEDULER.lock();
+
+        if scheduler.current_pid() == 0 {
+            scheduler.cleanup_stopping_tasks();
+        }
+    }
 }
 
 struct Scheduler {
     task_map: BTreeMap<usize, Task>,
     pid_allocator: PidAllocator,
-    exited_tasks: Vec<ExitedTask>,
     current_pid: usize,
+    stopping_tasks: Vec<usize>,
 }
 
 impl Scheduler {
@@ -74,8 +77,8 @@ impl Scheduler {
         Self {
             task_map: BTreeMap::new(),
             pid_allocator: PidAllocator::new(),
-            exited_tasks: Vec::new(),
             current_pid: 0,
+            stopping_tasks: Vec::new(),
         }
     }
 
@@ -110,7 +113,7 @@ impl Scheduler {
         self.task_map.insert(pid, task);
     }
 
-    fn stop_task(&mut self, pid: usize, exit_code: isize) -> bool {
+    fn stop_task(&mut self, pid: usize) -> bool {
         if pid == 0 {
             // idle task cannot be stopped
             return false;
@@ -125,20 +128,17 @@ impl Scheduler {
 
         // TODO: check if the task is privileged and the caller has permission to stop it
 
-        if task.state() == TaskState::Exited {
+        if task.state() == TaskState::Exited || task.state() == TaskState::Stopping {
             return false;
         }
 
-        task.set_state(TaskState::Exited);
-        self.exited_tasks.push(ExitedTask { pid, exit_code });
-        self.current_pid = 0;
+        task.set_state(TaskState::Stopping);
+        self.stopping_tasks.push(pid);
 
         true
     }
 
     fn schedule(&mut self) -> Option<ContextSwitcher> {
-        self.cleanup_exited_tasks();
-
         if self.task_map.is_empty() {
             return None;
         }
@@ -146,7 +146,9 @@ impl Scheduler {
         let next_pid = self
             .task_map
             .range((self.current_pid + 1)..)
-            .next()
+            .find(|(_, task)| {
+                task.state() != TaskState::Exited && task.state() != TaskState::Stopping
+            })
             .map(|(pid, _)| *pid)
             .unwrap_or_else(|| *self.task_map.keys().next().unwrap_or(&0));
 
@@ -156,7 +158,10 @@ impl Scheduler {
 
         let current_task_context = match self.task_map.get_mut(&self.current_pid) {
             Some(task) => {
-                task.set_state(TaskState::Ready);
+                if task.state() != TaskState::Exited && task.state() != TaskState::Stopping {
+                    task.set_state(TaskState::Ready);
+                }
+
                 task.context_mut() as *mut _
             }
             None => {
@@ -181,20 +186,24 @@ impl Scheduler {
         ))
     }
 
-    fn cleanup_exited_tasks(&mut self) {
-        for exited_task in self.exited_tasks.iter() {
-            if exited_task.pid == self.current_pid {
+    fn cleanup_stopping_tasks(&mut self) {
+        for pid in &self.stopping_tasks {
+            if *pid == self.current_pid {
                 continue;
             }
 
-            if self.task_map.remove(&exited_task.pid).is_some() {
+            if let Some(task) = self.task_map.remove(pid) {
                 // TODO: store the exit code and pass to the joiner
                 // NOTE: the joiner can be implemented as a object that waits for the task and returns the exit code;
-                self.pid_allocator.free(exited_task.pid);
+                self.pid_allocator.free(*pid);
+
+                unsafe {
+                    task.destroy_addr_space();
+                }
             }
         }
 
-        self.exited_tasks.clear();
+        self.stopping_tasks.clear();
     }
 }
 
