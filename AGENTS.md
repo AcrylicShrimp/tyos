@@ -13,6 +13,7 @@ application and user-library work.
 | `apps/`, `crates/tyos-ulib`, `crates/tyos-ulib-macro` | Implement requested features, fixes, and relevant tests. Preserve existing startup and kernel interface contracts. |
 | `crates/tyos-syscall` | Implement user-side wrappers for existing syscalls; leave syscall IDs, calling conventions, and kernel semantics to the developer. |
 | App-local build/linker files and manifests | Change as needed for delegated work, preserving the existing loading contract. |
+| OS version metadata | Agent-managed under [Versioning](docs/versioning.md). This permits root `[package].version` and its lockfile entry to change; other kernel/workspace settings remain developer-owned. |
 | Kernel (`src/`), all other crates, kernel/workspace build and linker configuration | Read-only: explain, investigate, review, and provide pseudocode or manual change instructions. |
 | Documentation | Create or update when requested. |
 
@@ -50,9 +51,11 @@ ownership, task lifetime, linker layout, and syscall ABI boundaries.
 ## Commits
 
 Use `type: summary` or `type(scope): summary` with a short, imperative summary.
+Mark incompatible app-facing API/ABI changes with `!` and explain the breakage.
 Types: `feat`, `fix`, `refactor`, `test`, `docs`, `build`, `ci`, `perf`, `chore`.
 Scope is optional and names the affected subsystem, e.g. `shell`, `ulib`, or `mem`.
 Keep each commit focused on one logical change.
+When preparing a commit, apply the [versioning policy](docs/versioning.md).
 
 These principles adapt the bounded scope, measured verification, and simplicity
 criteria in [Karpathy's autoresearch instructions](https://github.com/karpathy/autoresearch/blob/master/program.md)
