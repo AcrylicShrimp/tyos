@@ -12,3 +12,7 @@ pub fn exit(code: isize) -> ! {
     syscall(SyscallId::EXIT, code as usize, 0, 0);
     unreachable!()
 }
+
+pub fn grow_heap(page_count: usize) -> isize {
+    syscall(SyscallId::GROW_HEAP, page_count, 0, 0)
+}

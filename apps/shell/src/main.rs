@@ -1,10 +1,26 @@
 #![no_std]
 #![no_main]
 
+extern crate alloc;
+
+use alloc::{string::String, vec::Vec};
 use tyos_ulib::{Stdin, entry_point, println};
 
 #[entry_point]
 fn main() -> isize {
+    let s = String::from("heap works!");
+    let mut v = Vec::new();
+
+    for _ in 0..1000 {
+        v.push(s.clone());
+    }
+
+    println!("v has {} elements", v.len());
+
+    for (index, element) in v.iter().enumerate() {
+        println!("v[{}] = {}", index, element);
+    }
+
     let mut line_reader = LineReader::new();
 
     loop {

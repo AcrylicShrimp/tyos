@@ -1,14 +1,15 @@
 use crate::{resources::memory::frame_alloc, vmem::PAGE_TABLE};
-use alloc::vec::Vec;
+use alloc::vec::{self, Vec};
 use tyos_mem::{
     addr::{PAddr, VAddr},
     frame_mgr::FrameMgr,
-    page_table::{MapError, MapOutcome, PageTable, PageTableEntry, UnmapError, map},
+    page_table::{MapError, MapOutcome, PageTable, PageTableEntry, UnmapError, map, unmap},
 };
 
 #[derive(Debug)]
 pub enum TaskAddressSpaceError {
     OutOfMemory,
+    MaxHeapExceeded,
     ProgramEndNotAligned,
     ProgramEndOutOfRange,
     AddrOutOfRange,
@@ -126,6 +127,14 @@ impl TaskAddressSpace {
         self.root_page_frame
     }
 
+    pub fn root_page_table(&self) -> &PageTable {
+        unsafe { &*self.root_page_frame.to_hhdm().to_ptr::<PageTable>() }
+    }
+
+    pub fn root_page_table_mut(&mut self) -> &mut PageTable {
+        unsafe { &mut *self.root_page_frame.to_hhdm().to_mut_ptr::<PageTable>() }
+    }
+
     pub fn user_heap_range(&self) -> core::ops::Range<VAddr> {
         self.user_heap_start..self.user_heap_end
     }
@@ -136,6 +145,104 @@ impl TaskAddressSpace {
 
     pub fn kernel_stack_range(&self) -> core::ops::Range<VAddr> {
         self.kernel_stack_bottom..self.kernel_stack_top
+    }
+
+    pub fn grow_heap(&mut self, page_count: usize) -> Result<(), TaskAddressSpaceError> {
+        let max_additional_page_count = (TaskAddressSpace::USER_HEAP_END_ADDR.addr
+            - TaskAddressSpace::USER_HEAP_GUARD_SIZE
+            - self.user_heap_end.addr)
+            / FrameMgr::FRAME_SIZE;
+
+        if page_count > max_additional_page_count {
+            return Err(TaskAddressSpaceError::MaxHeapExceeded);
+        }
+
+        let mut frames = Vec::new();
+
+        if frames.try_reserve_exact(page_count).is_err() {
+            return Err(TaskAddressSpaceError::OutOfMemory);
+        }
+
+        frames.resize(page_count, PAddr::NULL);
+
+        let mut additional_frames = Vec::new();
+
+        if additional_frames.try_reserve_exact(page_count * 2).is_err() {
+            return Err(TaskAddressSpaceError::OutOfMemory);
+        }
+
+        if self
+            .owned_frames
+            .try_reserve_exact(page_count + page_count * 2)
+            .is_err()
+        {
+            return Err(TaskAddressSpaceError::OutOfMemory);
+        }
+
+        if !frame_alloc().alloc_many_into(&mut frames) {
+            return Err(TaskAddressSpaceError::OutOfMemory);
+        }
+
+        for (index, frame) in frames.iter().copied().enumerate() {
+            let vaddr = self.user_heap_end + index * FrameMgr::FRAME_SIZE;
+            let outcome = map(
+                frame_alloc(),
+                self.root_page_table_mut(),
+                vaddr,
+                frame,
+                PageTableEntry::FLAG_READ
+                    | PageTableEntry::FLAG_WRITE
+                    | PageTableEntry::FLAG_USER
+                    | PageTableEntry::FLAG_ACCESSED
+                    | PageTableEntry::FLAG_DIRTY,
+            );
+
+            match outcome {
+                Ok(outcome) => {
+                    if outcome.allocated_frames[0] != PAddr::NULL {
+                        additional_frames.push(outcome.allocated_frames[0]);
+                    }
+
+                    if outcome.allocated_frames[1] != PAddr::NULL {
+                        additional_frames.push(outcome.allocated_frames[1]);
+                    }
+                }
+                Err(err) => {
+                    for index in 0..index {
+                        let vaddr = self.user_heap_end + index * FrameMgr::FRAME_SIZE;
+
+                        // note: it is safe to ignore the removed frames here
+                        // because we are going to free all additional frames anyway
+                        let _ = unsafe { unmap(self.root_page_table_mut(), vaddr) };
+                    }
+
+                    unsafe {
+                        core::arch::asm!("sfence.vma");
+                    }
+
+                    frame_alloc().free_many(&additional_frames);
+                    frame_alloc().free_many(&frames);
+
+                    return Err(TaskAddressSpaceError::MapError(err));
+                }
+            }
+        }
+
+        for frame in &frames {
+            unsafe {
+                core::ptr::write_bytes(frame.to_hhdm().to_mut_ptr::<u8>(), 0, FrameMgr::FRAME_SIZE);
+            }
+        }
+
+        self.user_heap_end += page_count * FrameMgr::FRAME_SIZE;
+        self.owned_frames.extend(frames);
+        self.owned_frames.extend(additional_frames);
+
+        unsafe {
+            core::arch::asm!("sfence.vma");
+        }
+
+        Ok(())
     }
 }
 

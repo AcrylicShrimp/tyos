@@ -22,6 +22,10 @@ pub fn syscall_handler(syscall_id: usize, arg0: usize, arg1: usize, arg2: usize)
             let code = arg0 as isize;
             sys_exit(code)
         }
+        SyscallId::GROW_HEAP => {
+            let page_count = arg0;
+            sys_grow_heap(page_count)
+        }
         _ => -1,
     }
 }
@@ -73,4 +77,14 @@ fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
 fn sys_exit(code: isize) -> ! {
     scheduler::exit_task(scheduler::current_pid(), code);
     unreachable!("sys_exit should not return");
+}
+
+fn sys_grow_heap(page_count: usize) -> isize {
+    match scheduler::with_current_address_space(|addr_space| {
+        let old_user_heap_end = addr_space.user_heap_range().end;
+        addr_space.grow_heap(page_count).map(|_| old_user_heap_end)
+    }) {
+        Some(Ok(old_user_heap_end)) => old_user_heap_end.addr as isize,
+        _ => 0,
+    }
 }

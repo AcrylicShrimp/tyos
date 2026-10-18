@@ -77,24 +77,6 @@ pub extern "C" fn build_boot_page_table(page_table_ptr: *mut PageTable) {
     }
 }
 
-pub fn build_task_page_table(page_table: &mut PageTable) {
-    unsafe {
-        // zero out the page table
-        core::ptr::write_bytes::<PageTableEntry>(
-            page_table.entries.as_mut_ptr(),
-            0,
-            page_table.entries.len(),
-        );
-
-        // copy the shared page table to the task page table (hhdm + kernel space)
-        core::ptr::copy_nonoverlapping::<PageTableEntry>(
-            PAGE_TABLE.entries[256..].as_ptr(),
-            page_table.entries[256..].as_mut_ptr(),
-            256,
-        );
-    }
-}
-
 pub fn remove_temporal_double_mapping() {
     let page_table_vaddr = VAddr::from_ptr(&raw const PAGE_TABLE);
 

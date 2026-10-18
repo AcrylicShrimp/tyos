@@ -1,5 +1,6 @@
 #![no_std]
 
+mod heap;
 mod stdout;
 
 pub use stdout::*;

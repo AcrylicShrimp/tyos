@@ -3,7 +3,6 @@ use crate::{
     frame_alloc::FrameAlloc,
     frame_mgr::FrameMgr,
 };
-use tyos_uart::println;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
@@ -55,17 +54,17 @@ impl PageTable {
     };
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MapOutcome {
+    pub allocated_frames: [PAddr; 2],
+}
+
 #[derive(Debug)]
 pub enum MapError {
     AddressIsNull,
     AddressNotAligned,
     OutOfMemory,
     AlreadyMapped,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct MapOutcome {
-    pub allocated_frames: [PAddr; 2],
 }
 
 pub fn map(
@@ -107,13 +106,9 @@ pub fn map(
     let ppn1 = vaddr.ppn1();
     let ppn0 = vaddr.ppn0();
 
-    println!("ppn2: {}", ppn2);
-    println!("ppn1: {}", ppn1);
-    println!("ppn0: {}", ppn0);
-
-    if !page_table.entries[ppn2].is_valid() {
-        println!("allocating page table entry for ppn2");
-
+    let (is_l1_allocated, l1_addr) = if page_table.entries[ppn2].is_valid() {
+        (false, page_table.entries[ppn2].paddr())
+    } else {
         let paddr = match frame_alloc.alloc_contiguous(1) {
             Some(paddr) => {
                 allocated_frames[0] = paddr;
@@ -126,23 +121,19 @@ pub fn map(
         };
         let vaddr = paddr.to_hhdm();
 
-        println!("paddr: {}", paddr);
-        println!("vaddr: {}", vaddr);
-
         unsafe {
             let page_table = &mut *vaddr.to_mut_ptr::<PageTable>();
             page_table.zero_out();
         }
 
-        page_table.entries[ppn2] = PageTableEntry::new(paddr, PageTableEntry::FLAG_VALID);
-    }
-
-    // SAFE: we're converting physical address to virtual address
-    let l1_addr = page_table.entries[ppn2].paddr().to_hhdm();
-    let l1_ptr = l1_addr.to_mut_ptr::<PageTable>();
+        (true, paddr)
+    };
+    let l1_ptr = l1_addr.to_hhdm().to_mut_ptr::<PageTable>();
     let l1_table = unsafe { &mut *l1_ptr };
 
-    if !l1_table.entries[ppn1].is_valid() {
+    let (is_l0_allocated, l0_addr) = if l1_table.entries[ppn1].is_valid() {
+        (false, l1_table.entries[ppn1].paddr())
+    } else {
         let paddr = match frame_alloc.alloc_contiguous(1) {
             Some(paddr) => {
                 allocated_frames[1] = paddr;
@@ -160,11 +151,9 @@ pub fn map(
             page_table.zero_out();
         }
 
-        l1_table.entries[ppn1] = PageTableEntry::new(paddr, PageTableEntry::FLAG_VALID);
-    }
-
-    let l0_addr = l1_table.entries[ppn1].paddr().to_hhdm();
-    let l0_ptr = l0_addr.to_mut_ptr::<PageTable>();
+        (true, paddr)
+    };
+    let l0_ptr = l0_addr.to_hhdm().to_mut_ptr::<PageTable>();
     let l0_table = unsafe { &mut *l0_ptr };
 
     if l0_table.entries[ppn0].is_valid() {
@@ -174,7 +163,27 @@ pub fn map(
 
     l0_table.entries[ppn0] = PageTableEntry::new(paddr, PageTableEntry::FLAG_VALID | flags);
 
+    if is_l0_allocated {
+        // Mark the L0 page table as valid in the L1 table
+        l1_table.entries[ppn1] = PageTableEntry::new(l0_addr, PageTableEntry::FLAG_VALID);
+    }
+
+    if is_l1_allocated {
+        // Mark the L1 page table as valid in the L2 table
+        page_table.entries[ppn2] = PageTableEntry::new(l1_addr, PageTableEntry::FLAG_VALID);
+    }
+
+    unsafe {
+        core::arch::asm!("sfence.vma");
+    }
+
     Ok(MapOutcome { allocated_frames })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct UnmapOutcome {
+    pub paddr: PAddr,
+    pub removed_frames: [PAddr; 2],
 }
 
 #[derive(Debug)]
@@ -184,7 +193,7 @@ pub enum UnmapError {
     NotMapped,
 }
 
-pub unsafe fn unmap(page_table: &mut PageTable, vaddr: VAddr) -> Result<PAddr, UnmapError> {
+pub unsafe fn unmap(page_table: &mut PageTable, vaddr: VAddr) -> Result<UnmapOutcome, UnmapError> {
     if vaddr == VAddr::NULL {
         return Err(UnmapError::AddressIsNull);
     }
@@ -221,9 +230,26 @@ pub unsafe fn unmap(page_table: &mut PageTable, vaddr: VAddr) -> Result<PAddr, U
 
     l0_table.entries[ppn0] = PageTableEntry::EMPTY;
 
-    // TODO: handle mid-level unmap somehow
+    let mut removed_frames = [PAddr::NULL; 2];
 
-    Ok(paddr)
+    let is_l0_empty = l0_table.entries.iter().all(|entry| !entry.is_valid());
+
+    if is_l0_empty {
+        removed_frames[0] = l1_table.entries[ppn1].paddr();
+        l1_table.entries[ppn1] = PageTableEntry::EMPTY;
+    }
+
+    let is_l1_empty = l1_table.entries.iter().all(|entry| !entry.is_valid());
+
+    if is_l1_empty {
+        removed_frames[1] = page_table.entries[ppn2].paddr();
+        page_table.entries[ppn2] = PageTableEntry::EMPTY;
+    }
+
+    Ok(UnmapOutcome {
+        paddr,
+        removed_frames,
+    })
 }
 
 #[derive(Debug)]

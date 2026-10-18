@@ -17,6 +17,17 @@ pub fn current_pid() -> usize {
     scheduler.current_pid()
 }
 
+pub fn with_current_address_space<F, R>(f: F) -> Option<R>
+where
+    F: FnOnce(&mut TaskAddressSpace) -> R,
+{
+    let mut scheduler = SCHEDULER.lock();
+    let current_pid = scheduler.current_pid();
+    let task = scheduler.task_map.get_mut(&current_pid)?;
+    let addr_space = task.addr_space_mut()?;
+    Some(f(addr_space))
+}
+
 pub fn spawn_idle_task() {
     let mut scheduler = SCHEDULER.lock();
 

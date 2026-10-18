@@ -69,6 +69,14 @@ impl Task {
         &mut self.context
     }
 
+    pub fn addr_space(&self) -> Option<&TaskAddressSpace> {
+        self.addr_space.as_ref()
+    }
+
+    pub fn addr_space_mut(&mut self) -> Option<&mut TaskAddressSpace> {
+        self.addr_space.as_mut()
+    }
+
     pub fn set_state(&mut self, state: TaskState) {
         self.state = state;
     }
