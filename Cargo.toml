@@ -15,6 +15,8 @@ goblin = { version = "0.10", default-features = false, features = [
 ] }
 linked_list_allocator = "0.10"
 spinning_top = "0.3"
+unicode-segmentation = { version = "1", default-features = false }
+unicode-width = { version = "0.2", default-features = false }
 tyos-arch = { path = "crates/tyos-arch" }
 tyos-mem = { path = "crates/tyos-mem" }
 tyos-sbi = { path = "crates/tyos-sbi" }

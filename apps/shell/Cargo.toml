@@ -3,5 +3,15 @@ name = "shell"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "shell"
+path = "src/main.rs"
+test = false
+bench = false
+
 [dependencies]
+unicode-segmentation.workspace = true
+unicode-width.workspace = true
+
+[target.'cfg(target_os = "none")'.dependencies]
 tyos-ulib.workspace = true
