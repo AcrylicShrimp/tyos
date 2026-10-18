@@ -1,3 +1,17 @@
+pub struct Stdin;
+
+impl Stdin {
+    pub fn read(&mut self, buf: &mut [u8]) -> Result<usize, isize> {
+        let result = tyos_syscall::read(0, buf.as_mut_ptr(), buf.len());
+
+        if result < 0 {
+            Err(result)
+        } else {
+            Ok(result as usize)
+        }
+    }
+}
+
 pub struct Stdout;
 
 impl core::fmt::Write for Stdout {

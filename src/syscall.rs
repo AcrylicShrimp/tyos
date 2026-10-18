@@ -1,10 +1,17 @@
-use crate::scheduler;
-use tyos_arch::raw::csr;
+mod sstatus_sum_guard;
+
+use crate::{scheduler, syscall::sstatus_sum_guard::SstatusSumGuard};
 use tyos_syscall::SyscallId;
 use tyos_uart::print;
 
 pub fn syscall_handler(syscall_id: usize, arg0: usize, arg1: usize, arg2: usize) -> isize {
     match syscall_id {
+        SyscallId::READ => {
+            let fd = arg0;
+            let buf = arg1 as *mut u8;
+            let len = arg2;
+            sys_read(fd, buf, len)
+        }
         SyscallId::WRITE => {
             let fd = arg0;
             let buf = arg1 as *const u8;
@@ -19,33 +26,35 @@ pub fn syscall_handler(syscall_id: usize, arg0: usize, arg1: usize, arg2: usize)
     }
 }
 
+fn sys_read(fd: usize, buf: *mut u8, len: usize) -> isize {
+    match fd {
+        0 => {
+            if len == 0 {
+                return 0;
+            }
+
+            let _sstatus_guard = SstatusSumGuard::new();
+            let slice = unsafe { core::slice::from_raw_parts_mut(buf, len) };
+            let mut len = 0;
+
+            for dst in &mut slice[..] {
+                if let Some(byte) = tyos_uart::Uart.try_read_byte() {
+                    *dst = byte;
+                    len += 1;
+                } else {
+                    break;
+                }
+            }
+
+            len
+        }
+        _ => -1,
+    }
+}
+
 fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
     match fd {
         1 => {
-            struct SstatusSumGuard {
-                old_sstatus: csr::sstatus::Sstatus,
-            }
-
-            impl SstatusSumGuard {
-                pub fn new() -> Self {
-                    let old_sstatus = unsafe {
-                        csr::sstatus::read_and_set_flags(csr::sstatus::SstatusFlags::SUM)
-                    };
-
-                    SstatusSumGuard { old_sstatus }
-                }
-            }
-
-            impl Drop for SstatusSumGuard {
-                fn drop(&mut self) {
-                    if self.old_sstatus.contains(csr::sstatus::SstatusFlags::SUM) {
-                        unsafe { csr::sstatus::set_flags(csr::sstatus::SstatusFlags::SUM) };
-                    } else {
-                        unsafe { csr::sstatus::clear_flags(csr::sstatus::SstatusFlags::SUM) };
-                    }
-                }
-            }
-
             let _sstatus_guard = SstatusSumGuard::new();
             let slice = unsafe { core::slice::from_raw_parts(buf, len) };
 

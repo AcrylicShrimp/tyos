@@ -1,5 +1,9 @@
 use crate::{SyscallId, syscall::syscall};
 
+pub fn read(fd: usize, buf: *mut u8, len: usize) -> isize {
+    syscall(SyscallId::READ, fd, buf as usize, len)
+}
+
 pub fn write(fd: usize, buf: *const u8, len: usize) -> isize {
     syscall(SyscallId::WRITE, fd, buf as usize, len)
 }
