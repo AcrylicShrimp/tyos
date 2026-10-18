@@ -1,7 +1,7 @@
 use crate::{syscall::syscall_handler, timer_interrupt_handler::timer_interrupt_handler};
 use tyos_uart::println;
 
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Debug, Clone, Copy)]
 pub struct TrapContext {
     pub regs: [usize; 30],
@@ -174,12 +174,12 @@ pub extern "C" fn trap_handler(ctx: &mut TrapContext) {
     } else {
         match code {
             8 => {
-                let syscall_id = ctx.regs[17];
-                let arg0 = ctx.regs[10];
-                let arg1 = ctx.regs[11];
-                let arg2 = ctx.regs[12];
+                let syscall_id = ctx.regs[15]; // a7
+                let arg0 = ctx.regs[8]; // a0
+                let arg1 = ctx.regs[9]; // a1
+                let arg2 = ctx.regs[10]; // a2
                 let result = syscall_handler(syscall_id, arg0, arg1, arg2);
-                ctx.regs[10] = result as usize;
+                ctx.regs[8] = result as usize; // a0 (return value)
                 ctx.sepc += 4;
             }
             12 => {

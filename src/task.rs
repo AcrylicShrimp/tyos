@@ -4,7 +4,10 @@ pub mod loader;
 pub mod program;
 
 use crate::task::{address_space::TaskAddressSpace, loader::LoadedProgram};
-use tyos_mem::addr::VAddr;
+use tyos_mem::{
+    addr::VAddr,
+    page_table_config::{PageTableConfig, PageTableMode},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskState {
@@ -36,6 +39,11 @@ impl Task {
             pid,
             state: TaskState::Ready,
             context: TaskContext::create_user_context(
+                PageTableConfig::new(
+                    PageTableMode::Sv39,
+                    0,
+                    program.addr_space.root_page_frame().ppn(),
+                ),
                 program.addr_space.kernel_stack_range().end,
                 program.addr_space.user_main_thread_stack_range().end,
                 program.entry,
@@ -68,6 +76,7 @@ impl Task {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct TaskContext {
+    pub satp: usize,
     pub ra: usize,
     pub sp: usize,
     pub s: [usize; 12],
@@ -75,17 +84,20 @@ pub struct TaskContext {
 
 impl TaskContext {
     pub const EMPTY: Self = Self {
+        satp: 0,
         ra: 0,
         sp: 0,
         s: [0; 12],
     };
 
     pub fn create_user_context(
+        page_table_config: PageTableConfig,
         kernel_stack_top: VAddr,
         user_main_thread_stack_top: VAddr,
         entry: VAddr,
     ) -> Self {
         Self {
+            satp: page_table_config.config(),
             ra: task_entry_wrapper as usize,
             sp: kernel_stack_top.addr,
             s: [

@@ -22,10 +22,12 @@ use crate::{
     heap::init_heap,
     interrupt::enable_interrupts,
     scheduler::{spawn_idle_task, spawn_task},
+    timer_interrupt_handler::compute_next_ticks,
     trap::trap_all,
     vmem::remove_temporal_double_mapping,
 };
 use tyos_mem::addr::PAddr;
+use tyos_sbi::set_timer::set_timer;
 use tyos_uart::println;
 
 static USER_APP_SHELL_ELF_FILE: &[u8] =
@@ -124,11 +126,7 @@ pub extern "C" fn kentry() {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn kmain(hart_id: usize, dtb_paddr: usize) -> ! {
-    if hart_id != 0 {
-        halt();
-    }
-
+pub extern "C" fn kmain(_hart_id: usize, dtb_paddr: usize) -> ! {
     zero_bss();
 
     /// 16 MiB
@@ -143,6 +141,7 @@ pub extern "C" fn kmain(hart_id: usize, dtb_paddr: usize) -> ! {
     spawn_idle_task();
     spawn_task(USER_APP_SHELL_ELF_FILE);
 
+    set_timer(compute_next_ticks());
     enable_interrupts();
     halt();
 }

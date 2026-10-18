@@ -28,4 +28,8 @@ impl PageTableConfig {
             config: (mode as usize) << 60 | (asid << 44) | ppn,
         }
     }
+
+    pub fn config(self) -> usize {
+        self.config
+    }
 }
