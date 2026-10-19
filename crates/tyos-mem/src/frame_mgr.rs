@@ -1,5 +1,4 @@
 use crate::addr::PAddr;
-use tyos_uart::println;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -266,13 +265,6 @@ impl FrameMgr {
         let modified_region = Region::new(mem_metadata_region.end, original_region.end);
         probe.set_region(mem_metadata_region_index, modified_region);
 
-        println!(
-            "mem_metadata_size: {}KiB ({} ~ {})",
-            mem_metadata_size / 1024,
-            mem_metadata_region.start,
-            mem_metadata_region.end
-        );
-
         unsafe {
             // zero out the memory metadata, making all memory metadata as:
             // - order: 0
@@ -289,13 +281,6 @@ impl FrameMgr {
                 continue;
             }
 
-            println!(
-                "mem_region: {} ~ {} (Size: {} KiB)",
-                mem_region.start,
-                mem_region.end,
-                mem_region.len() / 1024
-            );
-
             for order in (0..self.mem_lists.len()).rev() {
                 if mem_region.is_empty() {
                     break;
@@ -303,9 +288,6 @@ impl FrameMgr {
 
                 let block_size = Self::FRAME_SIZE * (1 << order);
                 let block_count = mem_region.len() / block_size;
-
-                println!("block size: {} KiB", block_size / 1024);
-                println!("block count: {}", block_count);
 
                 if block_count == 0 {
                     continue;
@@ -329,8 +311,6 @@ impl FrameMgr {
                 mem_region.start += block_count * block_size;
             }
         }
-
-        println!("mem_lists: {:#?}", self.mem_lists);
     }
 
     fn alloc_from_order(&mut self, order: usize) -> Option<(usize, PAddr)> {

@@ -5,4 +5,3 @@ edition = "2024"
 
 [dependencies]
 tyos-sync.workspace = true
-tyos-uart.workspace = true

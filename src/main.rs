@@ -134,8 +134,6 @@ pub extern "C" fn kmain(_hart_id: usize, dtb_paddr: usize) -> ! {
     init_hal(KERNEL_HEAP_SIZE, PAddr::from_raw_addr(dtb_paddr));
     init_heap_alloc(KERNEL_HEAP_SIZE);
 
-    println!("kernel initialized");
-
     spawn_idle_task();
     spawn_task(user_apps::USER_APP_SHELL_ELF_FILE, None).expect("failed to spawn shell task");
 

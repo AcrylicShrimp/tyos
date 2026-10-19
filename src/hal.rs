@@ -189,13 +189,6 @@ fn register_available_regions(
         panic!("too many available regions");
     }
 
-    println!(
-        "[MEM] Init Region: {} ~ {} (Size: {} MB)",
-        region.start,
-        region.end,
-        region.len() / 1024 / 1024
-    );
-
     available_regions[count] = region;
     *available_regions_count += 1;
 }

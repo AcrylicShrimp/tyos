@@ -180,7 +180,6 @@ name = "tyos-mem"
 version = "0.1.0"
 dependencies = [
  "tyos-sync",
- "tyos-uart",
 ]
 
 [[package]]
