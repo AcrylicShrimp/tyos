@@ -1,11 +1,9 @@
+use crate::resources::memory::init_memory;
 use fdt::Fdt;
 use tyos_mem::{
     addr::{PAddr, VAddr},
     frame_mgr::{PhysicalMemoryProbe, Region},
 };
-use tyos_uart::println;
-
-use crate::resources::memory::init_memory;
 
 unsafe extern "C" {
     static _kernel_start: u8;
@@ -13,9 +11,14 @@ unsafe extern "C" {
 }
 
 static TIMER_FREQUENCY: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+static TOTAL_MEMORY: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
 pub fn get_timer_frequency() -> usize {
     TIMER_FREQUENCY.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn get_total_memory() -> usize {
+    TOTAL_MEMORY.load(core::sync::atomic::Ordering::Relaxed)
 }
 
 pub fn init_hal(kernel_heap_size: usize, dtb_paddr: PAddr) {
@@ -50,6 +53,10 @@ pub fn init_hal(kernel_heap_size: usize, dtb_paddr: PAddr) {
             &fdt,
         );
         let mut available_regions = find_available_regions(&reserved_regions, &fdt);
+
+        for region in &available_regions {
+            TOTAL_MEMORY.fetch_add(region.len(), core::sync::atomic::Ordering::Relaxed);
+        }
 
         struct Probe<'a> {
             available_regions: &'a mut [Region],

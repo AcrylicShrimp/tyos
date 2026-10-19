@@ -29,7 +29,7 @@ use crate::{
 };
 use tyos_mem::addr::PAddr;
 use tyos_sbi::set_timer::set_timer;
-use tyos_uart::println;
+use tyos_uart::{print, println};
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
@@ -133,6 +133,25 @@ pub extern "C" fn kmain(_hart_id: usize, dtb_paddr: usize) -> ! {
     init_trap();
     init_hal(KERNEL_HEAP_SIZE, PAddr::from_raw_addr(dtb_paddr));
     init_heap_alloc(KERNEL_HEAP_SIZE);
+
+    // print tyOS version and system informations
+    {
+        let version = env!("CARGO_PKG_VERSION");
+        println!("====== tyOS v{version} ======");
+        println!("- Timer Frequency:  {} Hz", hal::get_timer_frequency());
+        println!("- Total Memory:     {} Bytes", hal::get_total_memory());
+        println!("- Kernel Heap Size: {} Bytes", heap::heap_size());
+        println!("- Kernel Heap Used: {} Bytes", heap::heap_used());
+        println!("- Kernel Heap Free: {} Bytes", heap::heap_free());
+        print!("====================");
+
+        for _ in 0..version.len() {
+            print!("=");
+        }
+
+        println!();
+        println!();
+    }
 
     spawn_idle_task();
     spawn_task(user_apps::USER_APP_SHELL_ELF_FILE, None).expect("failed to spawn shell task");
